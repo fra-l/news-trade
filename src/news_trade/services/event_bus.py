@@ -1,54 +1,50 @@
-"""Redis-backed event bus for inter-agent messaging."""
+"""Async Redis-backed event bus for inter-agent messaging."""
 
 from __future__ import annotations
 
-from typing import Any
-
-import redis
+import redis.asyncio as aioredis
+from pydantic import BaseModel
 
 from news_trade.config import Settings
 
 
 class EventBus:
-    """Thin wrapper around Redis pub/sub for agent communication.
+    """Async wrapper around Redis Pub/Sub for agent communication.
 
     Agents publish typed Pydantic model instances to named channels.
     Subscribers receive deserialized model instances.
     """
 
     def __init__(self, settings: Settings) -> None:
-        self._client = redis.from_url(settings.redis_url, decode_responses=True)
-        self._pubsub = self._client.pubsub()
+        self._url = settings.redis_url
+        self._redis: aioredis.Redis | None = None
 
-    def publish(self, channel: str, payload: str) -> int:
-        """Publish a JSON-serialized Pydantic model to a channel.
+    async def connect(self) -> None:
+        """Open the async Redis connection."""
+        self._redis = aioredis.from_url(self._url, decode_responses=True)
+
+    async def publish(self, channel: str, message: BaseModel) -> None:
+        """Publish a Pydantic model to a channel as JSON.
 
         Args:
-            channel: Redis channel name (e.g. 'news_events', 'signals').
-            payload: JSON string from ``model.model_dump_json()``.
-
-        Returns:
-            Number of subscribers that received the message.
+            channel: Redis channel name (e.g. ``'news_events'``, ``'signals'``).
+            message: Any Pydantic model instance.
         """
-        return self._client.publish(channel, payload)
+        assert self._redis is not None, "Call connect() first"
+        await self._redis.publish(channel, message.model_dump_json())
 
-    def subscribe(self, *channels: str) -> None:
-        """Subscribe to one or more channels.
+    async def subscribe(self, *channels: str) -> aioredis.client.PubSub:
+        """Return a PubSub instance subscribed to the given channels.
 
         Args:
             channels: Channel names to listen on.
         """
-        self._pubsub.subscribe(*channels)
+        assert self._redis is not None, "Call connect() first"
+        pubsub = self._redis.pubsub()
+        await pubsub.subscribe(*channels)
+        return pubsub
 
-    def listen(self) -> Any:
-        """Yield messages from subscribed channels.
-
-        Yields:
-            Redis message dicts with 'channel' and 'data' keys.
-        """
-        return self._pubsub.listen()
-
-    def close(self) -> None:
+    async def close(self) -> None:
         """Close the Redis connection."""
-        self._pubsub.close()
-        self._client.close()
+        if self._redis:
+            await self._redis.aclose()

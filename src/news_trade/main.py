@@ -29,6 +29,7 @@ async def main() -> None:
     """Start the trading system and loop on the configured poll interval."""
     settings = get_settings()
     event_bus = EventBus(settings)
+    await event_bus.connect()
 
     logger.info("Initialising database …")
     create_tables(settings)
@@ -58,7 +59,7 @@ async def main() -> None:
     except KeyboardInterrupt:
         logger.info("Shutting down …")
     finally:
-        event_bus.close()
+        await event_bus.close()
 
 
 def entrypoint() -> None:
