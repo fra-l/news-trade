@@ -9,6 +9,7 @@ import sys
 from news_trade.config import get_settings
 from news_trade.graph.pipeline import build_pipeline
 from news_trade.graph.state import PipelineState
+from news_trade.services.database import create_tables
 from news_trade.services.event_bus import EventBus
 
 logging.basicConfig(
@@ -28,6 +29,9 @@ async def main() -> None:
     """Start the trading system and loop on the configured poll interval."""
     settings = get_settings()
     event_bus = EventBus(settings)
+
+    logger.info("Initialising database …")
+    create_tables(settings)
 
     logger.info("Building LangGraph pipeline …")
     pipeline = build_pipeline(settings, event_bus)
