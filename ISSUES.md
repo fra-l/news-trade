@@ -43,19 +43,22 @@ Implemented in commit `a7d022b`:
 
 ---
 
-## Issue 5: Implement NewsIngestorAgent end-to-end
+## ~~Issue 5: Implement NewsIngestorAgent end-to-end~~ ✅ Done
 
 **Priority:** P1 — Should-have
 **Depends on:** None (ORM and async event bus are already implemented)
 **Labels:** `agent`, `feature`
 
-Implement the first agent fully to prove the architecture works:
+Implemented in `src/news_trade/agents/news_ingestor.py`:
 
-- `_fetch_benzinga()` — call Benzinga News API with `httpx`, parse into `NewsEvent`
+- `_fetch_benzinga()` — calls Benzinga News API with `httpx`, parses into `NewsEvent`
 - `_fetch_polygon()` — same for Polygon.io reference news
-- `_is_duplicate()` — check SQLite (via ORM) for existing `event_id`
-- `_matches_watchlist()` — filter tickers against `settings.watchlist`
-- `run()` — orchestrate the above, publish to event bus, return state
+- `_is_duplicate()` — checks SQLite (via ORM) for existing `event_id`
+- `_matches_watchlist()` — filters tickers against `settings.watchlist`
+- `_persist()` — inserts new `NewsEventRow` into the database
+- `run()` — orchestrates the above, publishes to event bus, returns state
+- `_classify_event_type()` / `_parse_dt()` — module-level helpers
+- `tests/test_news_ingestor.py` — 27 tests covering all methods and `run()` end-to-end
 
 ---
 
@@ -103,9 +106,9 @@ runs `uv sync --extra dev` + `uv run pytest tests/ -v` on every pull request.
 ## Dependency graph
 
 ```
-#3 MarketSnapshot ─────► #4 Tests ✅
+#3 MarketSnapshot ✅ ──► #4 Tests ✅
 #4 Tests ✅ ───────────► #9 CI ✅
-#5 NewsIngestorAgent    (no remaining deps — ORM and event bus done)
+#5 NewsIngestorAgent ✅ (no remaining deps — ORM and event bus done)
 #7 docker-compose       (independent)
 #8 py.typed             (independent)
 ```
@@ -114,4 +117,3 @@ runs `uv sync --extra dev` + `uv run pytest tests/ -v` on every pull request.
 
 1. **#8** py.typed marker ← trivial
 2. **#7** docker-compose.yml ← trivial
-3. **#5** NewsIngestorAgent ← no remaining deps
