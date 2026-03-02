@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TypedDict
 
 from news_trade.models import (
+    MarketSnapshot,
     NewsEvent,
     Order,
     PortfolioState,
@@ -27,7 +28,7 @@ class PipelineState(TypedDict, total=False):
     news_events: list[NewsEvent]
 
     # After MarketDataAgent enrichment
-    market_context: dict[str, dict]  # ticker -> OHLCV / volatility snapshot
+    market_context: dict[str, MarketSnapshot]  # ticker -> OHLCV / volatility snapshot
 
     # After SentimentAnalystAgent
     sentiment_results: list[SentimentResult]

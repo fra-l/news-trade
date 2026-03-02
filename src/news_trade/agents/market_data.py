@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from news_trade.agents.base import BaseAgent
+from news_trade.models import MarketSnapshot
 
 
 class MarketDataAgent(BaseAgent):
@@ -35,6 +36,6 @@ class MarketDataAgent(BaseAgent):
         """Calculate annualized realized volatility from daily close prices."""
         raise NotImplementedError
 
-    def _build_context(self, ticker: str, bars: list[dict]) -> dict:
+    def _build_context(self, ticker: str, bars: list[dict]) -> MarketSnapshot:
         """Build a market context snapshot for a single ticker."""
         raise NotImplementedError
