@@ -395,7 +395,11 @@ def main() -> None:
         title = issue["title"]
         implemented = issue["implemented"]
 
-        status = "✅ IMPLEMENTED" if implemented else "🔲 OPEN"
+        if implemented:
+            print(f"  [SKIP ✅] Issue {md_num}: {title} (already implemented)")
+            continue
+
+        status = "🔲 OPEN"
         print(f"  [{status}] Issue {md_num}: {title}")
 
         resp = gh(
