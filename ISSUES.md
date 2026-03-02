@@ -29,21 +29,17 @@ and `MarketDataAgent._build_context()` return type accordingly.
 
 ---
 
-## Issue 4: Add unit tests for Pydantic models and pipeline graph
+## ~~Issue 4: Add unit tests for Pydantic models and pipeline graph~~ ✅ Done
 
 **Priority:** P0 — Must-have
 **Depends on:** #3 (MarketSnapshot)
 **Labels:** `testing`
 
-`tests/` is empty. Add at minimum:
+Implemented in commit `a7d022b`:
 
-- `tests/test_models.py` — validate serialization round-trips, field
-  constraints (score bounds, enum values), and optional-field defaults
-  for all 5+ Pydantic models.
-- `tests/test_pipeline.py` — verify `build_pipeline()` compiles without
-  error and the graph has the expected node names and conditional edges.
-- `tests/test_risk_rules.py` — stub for risk manager rule unit tests
-  (blocked until agent is implemented, but create the file with TODOs).
+- `tests/test_models.py` — 42 tests covering all 6 Pydantic models
+- `tests/test_pipeline.py` — 10 tests for `build_pipeline()` and routing helpers
+- `tests/test_risk_rules.py` — 10 skipped placeholder tests for risk rule methods
 
 ---
 
@@ -93,38 +89,29 @@ consumers get type-checking support per PEP 561.
 
 ---
 
-## Issue 9: Add GitHub Actions CI workflow
+## ~~Issue 9: Add GitHub Actions CI workflow~~ ✅ Done
 
 **Priority:** P2 — Nice-to-have
 **Depends on:** #4 (tests exist)
 **Labels:** `ci`, `dx`
 
-Add `.github/workflows/ci.yml` that runs on push/PR:
-
-1. `uv sync --group dev`
-2. `uv run ruff check src/ tests/`
-3. `uv run mypy src/`
-4. `uv run pytest`
-
-Matrix over Python 3.11 and 3.12.
+Implemented in commit `a7d022b` as `.github/workflows/tests.yml`:
+runs `uv sync --extra dev` + `uv run pytest tests/ -v` on every pull request.
 
 ---
 
 ## Dependency graph
 
 ```
-#3 MarketSnapshot ─────► #4 Tests
-#4 Tests ──────────────► #9 CI
+#3 MarketSnapshot ─────► #4 Tests ✅
+#4 Tests ✅ ───────────► #9 CI ✅
 #5 NewsIngestorAgent    (no remaining deps — ORM and event bus done)
 #7 docker-compose       (independent)
 #8 py.typed             (independent)
 ```
 
-## Suggested implementation order
+## Remaining implementation order
 
-1. **#3** MarketSnapshot model ← no deps, small
-2. **#8** py.typed marker ← trivial
-3. **#7** docker-compose.yml ← trivial
-4. **#4** Tests ← needs #3
-5. **#5** NewsIngestorAgent ← no remaining deps
-6. **#9** CI workflow ← needs #4
+1. **#8** py.typed marker ← trivial
+2. **#7** docker-compose.yml ← trivial
+3. **#5** NewsIngestorAgent ← no remaining deps
