@@ -24,7 +24,9 @@ EXPECTED_NODES = {
 
 @pytest.fixture()
 def mock_settings() -> MagicMock:
-    return MagicMock(spec=Settings)
+    m = MagicMock(spec=Settings)
+    m.database_url = "sqlite://"  # in-memory SQLite — no file needed
+    return m
 
 
 @pytest.fixture()
