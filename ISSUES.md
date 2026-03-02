@@ -4,41 +4,6 @@ Ordered by priority. Each issue lists its dependencies (if any).
 
 ---
 
-## Issue 1: Add SQLAlchemy ORM table models for trade logging
-
-**Priority:** P0 — Must-have
-**Depends on:** None
-**Labels:** `database`, `core`
-
-`services/database.py` has a session factory but no table definitions.
-Add a `services/tables.py` (or `services/orm.py`) with `DeclarativeBase` models for:
-
-- `orders` — mirrors the `Order` Pydantic model, persists every order lifecycle
-- `signals` — mirrors `TradeSignal`, logs every signal (approved or rejected)
-- `news_events` — stores ingested events for deduplication and auditing
-
-Add a `create_tables()` helper that calls `Base.metadata.create_all()`.
-Update `main.py` to call it at startup.
-
----
-
-## Issue 2: Consolidate duplicate Redis service files
-
-**Priority:** P0 — Must-have
-**Depends on:** None
-**Labels:** `cleanup`, `core`
-
-There are two Redis wrapper files:
-
-- `services/event_bus.py` — synchronous (`redis` package)
-- `services/redis_bus.py` — asynchronous (`redis.asyncio`)
-
-All agents use `async def run()`, so the async version is the correct one.
-Remove `event_bus.py`, rename `redis_bus.py` → `event_bus.py`, and update
-all imports (`base.py`, `config.py`, `main.py`, `pipeline.py`).
-
----
-
 ## Issue 3: Add typed MarketSnapshot Pydantic model
 
 **Priority:** P1 — Should-have
@@ -67,7 +32,7 @@ and `MarketDataAgent._build_context()` return type accordingly.
 ## Issue 4: Add unit tests for Pydantic models and pipeline graph
 
 **Priority:** P0 — Must-have
-**Depends on:** #1 (ORM tables), #3 (MarketSnapshot)
+**Depends on:** #3 (MarketSnapshot)
 **Labels:** `testing`
 
 `tests/` is empty. Add at minimum:
@@ -85,7 +50,7 @@ and `MarketDataAgent._build_context()` return type accordingly.
 ## Issue 5: Implement NewsIngestorAgent end-to-end
 
 **Priority:** P1 — Should-have
-**Depends on:** #1 (ORM for dedup storage), #2 (async event bus)
+**Depends on:** None (ORM and async event bus are already implemented)
 **Labels:** `agent`, `feature`
 
 Implement the first agent fully to prove the architecture works:
@@ -95,22 +60,6 @@ Implement the first agent fully to prove the architecture works:
 - `_is_duplicate()` — check SQLite (via ORM) for existing `event_id`
 - `_matches_watchlist()` — filter tickers against `settings.watchlist`
 - `run()` — orchestrate the above, publish to event bus, return state
-
----
-
-## Issue 6: Create `data/` directory for SQLite database
-
-**Priority:** P1 — Should-have
-**Depends on:** #1 (ORM tables)
-**Labels:** `infrastructure`
-
-The default `DATABASE_URL` is `sqlite:///data/trades.db` but the `data/`
-directory does not exist.
-
-Either:
-- Add `data/.gitkeep` and ensure the directory is in the repo, or
-- Add `os.makedirs()` logic in `create_tables()` to auto-create the
-  parent directory before calling `create_all()`.
 
 ---
 
@@ -164,24 +113,18 @@ Matrix over Python 3.11 and 3.12.
 ## Dependency graph
 
 ```
-#1 ORM tables ──────┬──► #4 Tests
-                    ├──► #5 NewsIngestorAgent
-                    └──► #6 data/ directory
-#2 Consolidate Redis ──► #5 NewsIngestorAgent
 #3 MarketSnapshot ─────► #4 Tests
 #4 Tests ──────────────► #9 CI
+#5 NewsIngestorAgent    (no remaining deps — ORM and event bus done)
 #7 docker-compose       (independent)
 #8 py.typed             (independent)
 ```
 
 ## Suggested implementation order
 
-1. **#1** ORM tables ← no deps, unblocks 3 others
-2. **#2** Consolidate Redis ← no deps, quick cleanup
-3. **#3** MarketSnapshot model ← no deps, small
-4. **#8** py.typed marker ← trivial
-5. **#7** docker-compose.yml ← trivial
-6. **#6** data/ directory ← needs #1
-7. **#4** Tests ← needs #1, #3
-8. **#5** NewsIngestorAgent ← needs #1, #2
-9. **#9** CI workflow ← needs #4
+1. **#3** MarketSnapshot model ← no deps, small
+2. **#8** py.typed marker ← trivial
+3. **#7** docker-compose.yml ← trivial
+4. **#4** Tests ← needs #3
+5. **#5** NewsIngestorAgent ← no remaining deps
+6. **#9** CI workflow ← needs #4
