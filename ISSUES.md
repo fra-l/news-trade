@@ -62,33 +62,26 @@ Implemented in `src/news_trade/agents/news_ingestor.py`:
 
 ---
 
-## Issue 7: Add `docker-compose.yml` for Redis
+## ~~Issue 7: Add `docker-compose.yml` for Redis~~ ✅ Done
 
 **Priority:** P2 — Nice-to-have
 **Depends on:** None
 **Labels:** `infrastructure`, `dx`
 
-Add a `docker-compose.yml` with a Redis 7 service so contributors can
-`docker compose up -d` instead of installing Redis manually.
+Implemented in commit `a13a504`:
 
-```yaml
-services:
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-```
+- `docker-compose.yml` — Redis 7-alpine service on port 6379
 
 ---
 
-## Issue 8: Add `py.typed` marker
+## ~~Issue 8: Add `py.typed` marker~~ ✅ Done
 
 **Priority:** P2 — Nice-to-have
 **Depends on:** None
 **Labels:** `typing`
 
-Add `src/news_trade/py.typed` (empty marker file) so downstream
-consumers get type-checking support per PEP 561.
+Implemented: `src/news_trade/py.typed` (empty PEP 561 marker file) so downstream
+consumers get type-checking support.
 
 ---
 
@@ -109,11 +102,8 @@ runs `uv sync --extra dev` + `uv run pytest tests/ -v` on every pull request.
 #3 MarketSnapshot ✅ ──► #4 Tests ✅
 #4 Tests ✅ ───────────► #9 CI ✅
 #5 NewsIngestorAgent ✅ (no remaining deps — ORM and event bus done)
-#7 docker-compose       (independent)
-#8 py.typed             (independent)
+#7 docker-compose ✅    (independent)
+#8 py.typed ✅          (independent)
 ```
 
-## Remaining implementation order
-
-1. **#8** py.typed marker ← trivial
-2. **#7** docker-compose.yml ← trivial
+All issues resolved — no remaining work.
