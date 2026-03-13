@@ -1,22 +1,16 @@
-"""NewsIngestorAgent — polls news APIs and filters by watchlist."""
+"""NewsIngestorAgent — fetches news via an injected NewsProvider."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
-
-import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from news_trade.agents.base import BaseAgent
 from news_trade.models import NewsEvent
 from news_trade.models.events import EventType
+from news_trade.providers.base import NewsProvider
 from news_trade.services.database import build_engine
 from news_trade.services.tables import Base, NewsEventRow
-
-_BENZINGA_NEWS_URL = "https://api.benzinga.com/api/v2/news"
-_POLYGON_NEWS_URL = "https://api.polygon.io/v2/reference/news"
 
 # Ordered from most-specific to least-specific to avoid false matches
 _KEYWORD_MAP: list[tuple[frozenset[str], EventType]] = [
@@ -43,18 +37,18 @@ _KEYWORD_MAP: list[tuple[frozenset[str], EventType]] = [
 
 
 class NewsIngestorAgent(BaseAgent):
-    """Ingests news from Benzinga or Polygon.io and emits NewsEvent instances.
+    """Ingests news via the injected NewsProvider and emits NewsEvent instances.
 
     Responsibilities:
-        - Poll the configured news provider on a timer.
+        - Delegate fetching to the injected provider.
         - Deduplicate articles already seen (by event_id).
         - Filter articles to only those mentioning tickers on the watchlist.
-        - Classify the event type (earnings, FDA, M&A, etc.).
         - Publish each new NewsEvent to the event bus and return them in state.
     """
 
-    def __init__(self, settings, event_bus) -> None:  # type: ignore[override]
+    def __init__(self, settings, event_bus, provider: NewsProvider) -> None:  # type: ignore[override]
         super().__init__(settings, event_bus)
+        self._provider = provider
         self._engine = build_engine(settings)
         Base.metadata.create_all(self._engine)
 
@@ -64,17 +58,12 @@ class NewsIngestorAgent(BaseAgent):
         Returns:
             ``{"news_events": [NewsEvent, ...]}``
         """
-        provider = self.settings.news_provider.lower()
         try:
-            if provider == "polygon":
-                candidates = await self._fetch_polygon()
-            else:
-                if provider != "benzinga":
-                    self.logger.warning(
-                        "Unknown news_provider %r — falling back to benzinga", provider
-                    )
-                candidates = await self._fetch_benzinga()
-        except httpx.HTTPError as exc:
+            candidates = await self._provider.fetch(
+                tickers=self.settings.watchlist,
+                since=state.get("last_poll"),
+            )
+        except Exception as exc:  # noqa: BLE001
             self.logger.error("News fetch failed: %s", exc)
             existing = state.get("errors") or []
             return {"news_events": [], "errors": [*existing, str(exc)]}
@@ -105,63 +94,6 @@ class NewsIngestorAgent(BaseAgent):
 
         self.logger.info("Ingested %d new events", len(new_events))
         return {"news_events": new_events}
-
-    async def _fetch_benzinga(self) -> list[NewsEvent]:
-        """Fetch recent articles from the Benzinga News API."""
-        params: dict[str, str | int] = {
-            "token": self.settings.benzinga_api_key,
-            "pageSize": 50,
-            "displayOutput": "full",
-        }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(_BENZINGA_NEWS_URL, params=params)
-            resp.raise_for_status()
-            articles: list[dict] = resp.json()
-
-        events = []
-        for article in articles:
-            tickers = [s["name"] for s in (article.get("stocks") or [])]
-            events.append(
-                NewsEvent(
-                    event_id=str(article["id"]),
-                    headline=article.get("title", ""),
-                    summary=article.get("teaser", ""),
-                    source="benzinga",
-                    url=article.get("url", ""),
-                    tickers=tickers,
-                    event_type=_classify_event_type(article.get("title", "")),
-                    published_at=_parse_dt(article.get("created", "")),
-                )
-            )
-        return events
-
-    async def _fetch_polygon(self) -> list[NewsEvent]:
-        """Fetch recent articles from the Polygon.io Reference News API."""
-        params: dict[str, str | int] = {
-            "apiKey": self.settings.polygon_api_key,
-            "limit": 50,
-            "order": "desc",
-        }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(_POLYGON_NEWS_URL, params=params)
-            resp.raise_for_status()
-            data: dict = resp.json()
-
-        events = []
-        for article in data.get("results", []):
-            events.append(
-                NewsEvent(
-                    event_id=article["id"],
-                    headline=article.get("title", ""),
-                    summary=article.get("description", ""),
-                    source="polygon",
-                    url=article.get("article_url", ""),
-                    tickers=article.get("tickers", []),
-                    event_type=_classify_event_type(article.get("title", "")),
-                    published_at=_parse_dt(article.get("published_utc", "")),
-                )
-            )
-        return events
 
     def _matches_watchlist(self, tickers: list[str]) -> bool:
         """Return True if any ticker is on the configured watchlist."""
@@ -195,7 +127,7 @@ class NewsIngestorAgent(BaseAgent):
 
 
 # ---------------------------------------------------------------------------
-# Module-level helpers
+# Module-level helpers (kept for backwards compatibility with tests)
 # ---------------------------------------------------------------------------
 
 
@@ -208,16 +140,17 @@ def _classify_event_type(headline: str) -> EventType:
     return EventType.OTHER
 
 
-def _parse_dt(value: str) -> datetime:
+def _parse_dt(value: str) -> "datetime":  # noqa: F821  (forward ref for compat)
     """Parse an RFC 2822 or ISO 8601 datetime string, falling back to utcnow."""
+    from datetime import datetime, timezone
+    from email.utils import parsedate_to_datetime
+
     if not value:
         return datetime.now(timezone.utc)
-    # RFC 2822 (Benzinga): "Mon, 02 Jan 2006 15:04:05 +0000"
     try:
         return parsedate_to_datetime(value)
     except Exception:  # noqa: BLE001
         pass
-    # ISO 8601 (Polygon): "2006-01-02T15:04:05Z" — supported natively in Python 3.11+
     try:
         return datetime.fromisoformat(value)
     except ValueError:

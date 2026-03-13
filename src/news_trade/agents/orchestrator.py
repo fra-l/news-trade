@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from news_trade.agents.base import BaseAgent
+from news_trade.providers import (
+    get_market_data_provider,
+    get_news_provider,
+    get_sentiment_provider,
+)
 
 if TYPE_CHECKING:
     from langgraph.graph import StateGraph
@@ -21,7 +26,9 @@ class OrchestratorAgent(BaseAgent):
         NewsIngestor → MarketData → SentimentAnalyst
             → SignalGenerator → RiskManager → Execution
 
-    Conditional edges handle early exits (e.g. no news, all signals rejected).
+    Providers are resolved from config via the factory functions and injected
+    into each agent constructor.  Conditional edges handle early exits
+    (e.g. no news, all signals rejected).
     """
 
     def __init__(self, settings: Settings, event_bus: EventBus) -> None:

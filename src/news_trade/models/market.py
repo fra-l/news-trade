@@ -33,6 +33,14 @@ class MarketSnapshot(BaseModel):
     volatility_20d: float = Field(
         description="Annualized 20-day realized volatility (e.g. 0.25 = 25%)"
     )
+    atr_14d: float | None = Field(
+        default=None,
+        description="14-day Average True Range in dollars",
+    )
+    relative_volume: float | None = Field(
+        default=None,
+        description="Today's volume divided by 20-day average volume",
+    )
     bars: list[OHLCVBar] = Field(
         default_factory=list,
         description="Raw OHLCV bars used to compute the snapshot",
