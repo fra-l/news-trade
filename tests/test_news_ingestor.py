@@ -22,14 +22,30 @@ NOW = datetime(2026, 3, 2, 12, 0, 0, tzinfo=timezone.utc)
 # ---------------------------------------------------------------------------
 
 
+def _make_news_event(event_id: str = "bz-1", ticker: str = "AAPL") -> NewsEvent:
+    return NewsEvent(
+        event_id=event_id,
+        headline="Apple Reports Record Earnings",
+        source="benzinga",
+        tickers=[ticker],
+        published_at=NOW,
+    )
+
+
 @pytest.fixture()
-def agent():
+def mock_provider():
+    provider = AsyncMock()
+    provider.name = "mock"
+    provider.fetch = AsyncMock(return_value=[])
+    return provider
+
+
+@pytest.fixture()
+def agent(mock_provider):
     settings = MagicMock()
-    settings.news_provider = "benzinga"
-    settings.benzinga_api_key = "test-key"
-    settings.polygon_api_key = "test-key"
     settings.watchlist = ["AAPL", "MSFT", "NVDA"]
     settings.database_url = "sqlite://"  # in-memory SQLite — no file needed
+    settings.news_keyword_prefilter = True
 
     event_bus = AsyncMock()
 
@@ -38,7 +54,7 @@ def agent():
 
         engine = create_engine("sqlite://")
         mock_engine_factory.return_value = engine
-        a = NewsIngestorAgent(settings, event_bus)
+        a = NewsIngestorAgent(settings, event_bus, provider=mock_provider)
 
     return a
 
@@ -171,133 +187,63 @@ class TestIsDuplicate:
 
 
 # ---------------------------------------------------------------------------
-# run() — end-to-end with mocked HTTP
+# run() — end-to-end with mocked provider
 # ---------------------------------------------------------------------------
 
 
-BENZINGA_RESPONSE = [
-    {
-        "id": "bz-1",
-        "title": "Apple Reports Record Earnings",
-        "teaser": "AAPL beats EPS estimates",
-        "url": "https://example.com/1",
-        "stocks": [{"name": "AAPL"}],
-        "created": "Mon, 02 Mar 2026 10:00:00 +0000",
-    },
-    {
-        "id": "bz-2",
-        "title": "Google Reports Earnings",
-        "teaser": "GOOG beats EPS",
-        "url": "https://example.com/2",
-        "stocks": [{"name": "GOOG"}],  # not on watchlist
-        "created": "Mon, 02 Mar 2026 10:05:00 +0000",
-    },
-]
-
-POLYGON_RESPONSE = {
-    "results": [
-        {
-            "id": "pg-1",
-            "title": "NVIDIA GPU Demand Surges",
-            "description": "NVDA sees record demand",
-            "article_url": "https://example.com/3",
-            "tickers": ["NVDA"],
-            "published_utc": "2026-03-02T10:00:00Z",
-        }
-    ]
-}
-
-
 class TestRun:
-    async def test_run_benzinga_returns_watchlist_events(self, agent):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = BENZINGA_RESPONSE
-        mock_resp.raise_for_status = MagicMock()
+    async def test_run_returns_watchlist_events(self, agent, mock_provider):
+        aapl_event = _make_news_event("bz-1", "AAPL")
+        goog_event = _make_news_event("bz-2", "GOOG")  # not on watchlist
+        mock_provider.fetch.return_value = [aapl_event, goog_event]
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
-            result = await agent.run({})
+        result = await agent.run({})
 
         events = result["news_events"]
-        # Only AAPL is on the watchlist
         assert len(events) == 1
-        assert events[0].tickers == ["AAPL"]
         assert events[0].event_id == "bz-1"
 
-    async def test_run_polygon_returns_events(self, agent):
-        agent.settings.news_provider = "polygon"
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = POLYGON_RESPONSE
-        mock_resp.raise_for_status = MagicMock()
+    async def test_run_deduplicates_on_second_call(self, agent, mock_provider):
+        event = _make_news_event("bz-1", "AAPL")
+        mock_provider.fetch.return_value = [event]
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
-            result = await agent.run({})
-
-        events = result["news_events"]
-        assert len(events) == 1
-        assert events[0].event_id == "pg-1"
-
-    async def test_run_deduplicates_on_second_call(self, agent):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = BENZINGA_RESPONSE
-        mock_resp.raise_for_status = MagicMock()
-
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
-            first = await agent.run({})
-            second = await agent.run({})
+        first = await agent.run({})
+        second = await agent.run({})
 
         assert len(first["news_events"]) == 1
         assert len(second["news_events"]) == 0  # already persisted
 
-    async def test_run_returns_errors_on_http_failure(self, agent):
-        import httpx
+    async def test_run_returns_errors_on_provider_failure(self, agent, mock_provider):
+        mock_provider.fetch.side_effect = RuntimeError("provider error")
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(
-                side_effect=httpx.ConnectError("connection refused")
-            )
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
-            result = await agent.run({})
+        result = await agent.run({})
 
         assert result["news_events"] == []
         assert len(result["errors"]) == 1
 
-    async def test_run_publishes_to_event_bus(self, agent):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = BENZINGA_RESPONSE
-        mock_resp.raise_for_status = MagicMock()
+    async def test_run_publishes_to_event_bus(self, agent, mock_provider):
+        event = _make_news_event("bz-1", "AAPL")
+        mock_provider.fetch.return_value = [event]
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
-            await agent.run({})
+        await agent.run({})
 
         agent.event_bus.publish.assert_awaited_once()
         call_args = agent.event_bus.publish.call_args
         assert call_args[0][0] == "news_events"
         assert isinstance(call_args[0][1], NewsEvent)
+
+    async def test_run_passes_watchlist_to_provider(self, agent, mock_provider):
+        mock_provider.fetch.return_value = []
+
+        await agent.run({})
+
+        mock_provider.fetch.assert_awaited_once()
+        call_kwargs = mock_provider.fetch.call_args
+        assert call_kwargs[1]["tickers"] == ["AAPL", "MSFT", "NVDA"]
+
+    async def test_run_returns_empty_on_no_events(self, agent, mock_provider):
+        mock_provider.fetch.return_value = []
+
+        result = await agent.run({})
+
+        assert result["news_events"] == []

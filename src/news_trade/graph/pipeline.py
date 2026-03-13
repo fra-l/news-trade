@@ -17,6 +17,11 @@ from news_trade.agents.sentiment_analyst import SentimentAnalystAgent
 from news_trade.agents.signal_generator import SignalGeneratorAgent
 from news_trade.config import Settings
 from news_trade.graph.state import PipelineState
+from news_trade.providers import (
+    get_market_data_provider,
+    get_news_provider,
+    get_sentiment_provider,
+)
 from news_trade.services.event_bus import EventBus
 
 # Node name constants
@@ -54,9 +59,9 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     Returns:
         A compiled LangGraph ``StateGraph``.
     """
-    news_agent = NewsIngestorAgent(settings, event_bus)
-    market_agent = MarketDataAgent(settings, event_bus)
-    sentiment_agent = SentimentAnalystAgent(settings, event_bus)
+    news_agent = NewsIngestorAgent(settings, event_bus, provider=get_news_provider(settings))
+    market_agent = MarketDataAgent(settings, event_bus, provider=get_market_data_provider(settings))
+    sentiment_agent = SentimentAnalystAgent(settings, event_bus, provider=get_sentiment_provider(settings))
     signal_agent = SignalGeneratorAgent(settings, event_bus)
     risk_agent = RiskManagerAgent(settings, event_bus)
     exec_agent = ExecutionAgent(settings, event_bus)

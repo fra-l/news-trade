@@ -4,8 +4,27 @@ Uses pydantic-settings so that every value can be overridden via env vars
 or a .env file at the project root.
 """
 
+from enum import Enum
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class NewsProviderType(str, Enum):
+    RSS = "rss"
+    BENZINGA = "benzinga"
+
+
+class MarketDataProviderType(str, Enum):
+    YFINANCE = "yfinance"
+    POLYGON_FREE = "polygon_free"
+    POLYGON_PAID = "polygon_paid"
+    ALPACA = "alpaca"
+
+
+class SentimentProviderType(str, Enum):
+    CLAUDE = "claude"
+    KEYWORD = "keyword"
 
 
 class Settings(BaseSettings):
@@ -18,25 +37,21 @@ class Settings(BaseSettings):
     )
 
     # --- Anthropic / Claude ---
-    anthropic_api_key: str = Field(description="Anthropic API key")
+    anthropic_api_key: str = Field(default="", description="Anthropic API key")
     claude_model: str = Field(
         default="claude-sonnet-4-6",
         description="Claude model id for sentiment analysis",
     )
 
     # --- Alpaca Markets ---
-    alpaca_api_key: str = Field(description="Alpaca API key id")
-    alpaca_secret_key: str = Field(description="Alpaca API secret key")
+    alpaca_api_key: str = Field(default="", description="Alpaca API key id")
+    alpaca_secret_key: str = Field(default="", description="Alpaca API secret key")
     alpaca_base_url: str = Field(
         default="https://paper-api.alpaca.markets",
         description="Alpaca base URL (paper or live)",
     )
 
-    # --- News provider ---
-    news_provider: str = Field(
-        default="benzinga",
-        description="News data source: 'benzinga' or 'polygon'",
-    )
+    # --- News provider (legacy field kept for backwards compat) ---
     benzinga_api_key: str = Field(default="", description="Benzinga API key")
     polygon_api_key: str = Field(default="", description="Polygon.io API key")
 
@@ -54,7 +69,7 @@ class Settings(BaseSettings):
 
     # --- Watchlist & trading parameters ---
     watchlist: list[str] = Field(
-        default=["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"],
+        default=["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"],
         description="Tickers to monitor for news",
     )
     news_poll_interval_sec: int = Field(
@@ -76,6 +91,34 @@ class Settings(BaseSettings):
     min_signal_conviction: float = Field(
         default=0.6,
         description="Minimum conviction score to generate a trade signal",
+    )
+
+    # --- Provider selection ---
+    news_provider: NewsProviderType = Field(
+        default=NewsProviderType.RSS,
+        description="News data source: 'rss' (free) or 'benzinga' (premium)",
+    )
+    market_data_provider: MarketDataProviderType = Field(
+        default=MarketDataProviderType.YFINANCE,
+        description="Market data source: yfinance, polygon_free, polygon_paid, or alpaca",
+    )
+    sentiment_provider: SentimentProviderType = Field(
+        default=SentimentProviderType.CLAUDE,
+        description="Sentiment analysis provider: 'claude' or 'keyword'",
+    )
+
+    # --- Cost controls ---
+    claude_daily_budget_usd: float = Field(
+        default=2.00,
+        description="Maximum daily Claude API spend in USD",
+    )
+    sentiment_dry_run: bool = Field(
+        default=False,
+        description="Skip real sentiment API calls; use mock neutral scores",
+    )
+    news_keyword_prefilter: bool = Field(
+        default=True,
+        description="Pre-filter articles by ticker keyword before Claude analysis",
     )
 
 

@@ -1,19 +1,23 @@
-"""SentimentAnalystAgent — classifies news sentiment using Claude."""
+"""SentimentAnalystAgent — classifies news sentiment via an injected SentimentProvider."""
 
 from __future__ import annotations
 
 from news_trade.agents.base import BaseAgent
-from news_trade.models import NewsEvent, SentimentResult
+from news_trade.providers.base import SentimentProvider
 
 
 class SentimentAnalystAgent(BaseAgent):
-    """Uses the Anthropic Claude API to analyse sentiment of news events.
+    """Analyses sentiment for news events using the injected provider.
 
     Responsibilities:
-        - Format each NewsEvent into a prompt for Claude.
-        - Call the Claude Messages API (claude-sonnet-4-6).
-        - Parse the structured response into a SentimentResult.
+        - Apply optional keyword pre-filter to skip irrelevant articles.
+        - Delegate scoring to the injected SentimentProvider.
+        - Return a flat list of SentimentResult objects.
     """
+
+    def __init__(self, settings, event_bus, provider: SentimentProvider) -> None:  # type: ignore[override]
+        super().__init__(settings, event_bus)
+        self._provider = provider
 
     async def run(self, state: dict) -> dict:
         """Analyse sentiment for all news events in state.
@@ -21,25 +25,35 @@ class SentimentAnalystAgent(BaseAgent):
         Returns:
             ``{"sentiment_results": [SentimentResult, ...]}``
         """
-        raise NotImplementedError
+        news_events = state.get("news_events") or []
 
-    async def _analyse_event(self, event: NewsEvent) -> list[SentimentResult]:
-        """Call Claude to classify sentiment for a single news event.
+        if not news_events:
+            return {"sentiment_results": []}
 
-        Returns one SentimentResult per ticker mentioned in the event.
-        """
-        raise NotImplementedError
+        # Optional keyword pre-filter: skip events whose headline/summary
+        # does not contain at least one watchlist ticker symbol.
+        if self.settings.news_keyword_prefilter:
+            watchlist_set = set(self.settings.watchlist)
+            news_events = [
+                e for e in news_events
+                if set(e.tickers) & watchlist_set
+            ]
 
-    def _build_prompt(self, event: NewsEvent) -> str:
-        """Construct the sentiment-analysis prompt for Claude.
+        if not news_events:
+            self.logger.debug("All events filtered out by keyword pre-filter")
+            return {"sentiment_results": []}
 
-        The prompt instructs the model to return structured JSON matching
-        the SentimentResult schema.
-        """
-        raise NotImplementedError
+        try:
+            results = await self._provider.analyse_batch(news_events)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Sentiment analysis failed: %s", exc)
+            existing = state.get("errors") or []
+            return {"sentiment_results": [], "errors": [*existing, str(exc)]}
 
-    def _parse_response(
-        self, raw: str, event: NewsEvent
-    ) -> list[SentimentResult]:
-        """Parse Claude's response text into validated SentimentResult models."""
-        raise NotImplementedError
+        self.logger.info(
+            "Scored %d events → %d results via %s",
+            len(news_events),
+            len(results),
+            self._provider.name,
+        )
+        return {"sentiment_results": results}

@@ -318,6 +318,13 @@ class TestMarketSnapshot:
     def test_optional_field_defaults(self):
         ms = self._make()
         assert ms.bars == []
+        assert ms.atr_14d is None
+        assert ms.relative_volume is None
+
+    def test_optional_metrics_accepted(self):
+        ms = self._make(atr_14d=3.5, relative_volume=1.8)
+        assert ms.atr_14d == 3.5
+        assert ms.relative_volume == 1.8
 
     def test_nested_bar_serialization(self):
         bar = self._make_bar()
