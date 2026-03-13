@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from news_trade.config import Settings
+from news_trade.config import (
+    MarketDataProviderType,
+    NewsProviderType,
+    SentimentProviderType,
+    Settings,
+)
 from news_trade.graph.pipeline import (
     _has_approved_signals,
     _has_news_events,
@@ -24,8 +29,14 @@ EXPECTED_NODES = {
 
 @pytest.fixture()
 def mock_settings() -> MagicMock:
-    m = MagicMock(spec=Settings)
+    # spec against an instance: Pydantic v2 fields appear in dir(instance) but
+    # not in dir(class), so MagicMock(spec=Settings) would reject field access.
+    m = MagicMock(spec=Settings())
     m.database_url = "sqlite://"  # in-memory SQLite — no file needed
+    m.news_provider = NewsProviderType.RSS
+    m.market_data_provider = MarketDataProviderType.YFINANCE
+    m.sentiment_provider = SentimentProviderType.KEYWORD
+    m.watchlist = ["AAPL"]
     return m
 
 
