@@ -183,7 +183,7 @@ class TestKeywordSentimentProvider:
     def test_confidence_is_fixed(self, provider):
         import asyncio
         event = _make_event()
-        result = asyncio.get_event_loop().run_until_complete(provider.analyse(event))
+        result = asyncio.run(provider.analyse(event))
         assert result.confidence == 0.4
 
 
