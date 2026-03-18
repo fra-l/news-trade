@@ -15,8 +15,10 @@
 4. [TradeSignal Model](#4-tradesignal-model)
 5. [Confidence Thresholds](#5-confidence-thresholds)
 6. [Earnings Calendar Integration](#6-earnings-calendar-integration)
-7. [End-to-End Flow](#7-end-to-end-flow)
-8. [New Issues](#8-new-issues)
+7. [RiskManagerAgent](#7-riskmanageragent)
+8. [SQLite ORM — OpenStage1Position](#8-sqlite-orm--openstage1position)
+9. [End-to-End Flow](#9-end-to-end-flow)
+10. [All Issues](#10-all-issues)
 
 ---
 
@@ -85,33 +87,31 @@ Key endpoints:
 ### Models — `models/surprise.py`
 
 ```
-SurpriseDirection   StrEnum: BEAT | MISS | IN_LINE
+SurpriseDirection     StrEnum: BEAT | MISS | IN_LINE
 
-MetricSurprise      BaseModel
-  actual            float
-  consensus         float          mean analyst estimate
-  estimate_high     float
-  estimate_low      float
-  analyst_count     int
+MetricSurprise        BaseModel
+  actual              float
+  consensus           float          mean analyst estimate
+  estimate_high       float
+  estimate_low        float
+  analyst_count       int
+  pct_surprise        computed       ((actual - consensus) / |consensus|) * 100
+  estimate_std        computed       (high - low) / 4
+  sigma_surprise      computed       (actual - consensus) / estimate_std
+  direction           computed       BEAT if pct > 2.0, MISS if pct < -2.0
+  confidence          computed       (sigma_score * 0.7) + (coverage_score * 0.3)
 
-  pct_surprise      computed  ((actual - consensus) / |consensus|) * 100
-  estimate_std      computed  (high - low) / 4   [range/4 heuristic]
-  sigma_surprise    computed  (actual - consensus) / estimate_std
-  direction         computed  BEAT if pct > 2.0, MISS if pct < -2.0
-  confidence        computed  (sigma_score * 0.7) + (coverage_score * 0.3)
-
-EarningsSurprise    BaseModel
-  ticker            str
-  report_date       date
-  fiscal_quarter    str            e.g. "Q3 2025"
-  eps               MetricSurprise
-  revenue           MetricSurprise
-  guidance_sentiment  float | None    -1.0 to +1.0, from SentimentAnalystAgent
+EarningsSurprise      BaseModel
+  ticker              str
+  report_date         date
+  fiscal_quarter      str
+  eps                 MetricSurprise
+  revenue             MetricSurprise
+  guidance_sentiment  float | None   -1.0 to +1.0, from SentimentAnalystAgent
   guidance_direction  SurpriseDirection | None
-
-  composite_surprise  computed  (eps.pct * 0.6) + (rev.pct * 0.4) + (guidance * 20)
-  composite_confidence  computed  mean(eps.confidence, revenue.confidence)
-  signal_strength   computed  STRONG | MODERATE | WEAK | NONE
+  composite_surprise  computed       (eps.pct * 0.6) + (rev.pct * 0.4) + (guidance * 20)
+  composite_confidence computed      mean(eps.confidence, revenue.confidence)
+  signal_strength     computed       STRONG | MODERATE | WEAK | NONE
 ```
 
 ### Signal Strength Thresholds
@@ -125,16 +125,16 @@ EarningsSurprise    BaseModel
 
 ### Provider Interface — `providers/protocols.py`
 
-```python
-class EstimatesProvider(Protocol):
-    async def get_consensus(ticker, fiscal_quarter) -> tuple[float, float, float, float, int]
-    async def get_revenue_consensus(ticker, fiscal_quarter) -> tuple[...]
-    async def get_historical_surprise(ticker) -> list[dict]
+```
+EstimatesProvider (Protocol)
+  get_consensus(ticker, fiscal_quarter) → (consensus, high, low, actual, analyst_count)
+  get_revenue_consensus(ticker, fiscal_quarter) → (...)
+  get_historical_surprise(ticker) → list[dict]
 ```
 
 Implementation: `providers/estimates/fmp.py` — `FMPEstimatesProvider`
 
-### Settings Additions — `config.py`
+### Settings Additions
 
 ```
 earn_beat_pct_threshold       float   default 2.0
@@ -150,7 +150,7 @@ earn_guidance_weight          float   default 0.20
 
 ### Rationale
 
-Pre-earnings positioning (stage 1) and post-announcement PEAD (stage 2) are treated as a sequential two-stage strategy, not two independent signals. Stage 1 is an optionality bet at reduced size; stage 2 deploys remaining size only after the announcement confirms direction.
+Pre-earnings positioning (stage 1) and post-announcement PEAD (stage 2) are treated as a sequential two-stage strategy. Stage 1 is an optionality bet at reduced size; stage 2 deploys remaining size only after the announcement confirms direction.
 
 Because the two stages span separate pipeline runs, an `OpenStage1Position` record is persisted to SQLite as a bridge.
 
@@ -162,24 +162,24 @@ Stage1Status    StrEnum: OPEN | CONFIRMED | REVERSED | EXITED | EXPIRED
 OpenStage1Position  BaseModel
   id                    str (uuid)
   ticker                str
-  direction             str         "long" | "short"
-  size_pct              float       fraction of max position used in stage 1
+  direction             str               "long" | "short"
+  size_pct              float
   entry_price           float
   opened_at             datetime
   expected_report_date  date
   fiscal_quarter        str
-  historical_beat_rate  float       from FMP historical surprises
-  status                Stage1Status  default OPEN
+  historical_beat_rate  float
+  status                Stage1Status      default OPEN
   days_to_report        computed
 ```
 
-### Stage 1 — `EARN_PRE` Signal Logic
+### Stage 1 — EARN_PRE Signal Logic
 
-Fires 2–5 days before report (from `EarningsCalendarAgent`, see Section 6).
+Fires 2–5 days before report (from `EarningsCalendarAgent`).
 
 ```
 beat_rate = historical beat rate from FMP
-Skip if beat_rate < 0.55 or > 0.85   (no edge / suspiciously perfect)
+skip if beat_rate < 0.55 or > 0.85
 
 direction  = long  if beat_rate >= 0.60
              short if beat_rate <  0.60
@@ -187,32 +187,32 @@ direction  = long  if beat_rate >= 0.60
 size_pct   = 0.25 + ((beat_rate - 0.60) / 0.25) * 0.15
              clamped to [0.25, 0.40]
 
-stop_loss  = 4%   (tight — optionality bet)
-take_profit = None (exit is event-driven, not price-driven)
+stop_loss  = 4%
+take_profit = None   (event-driven exit)
 
-→ Persist OpenStage1Position to SQLite
-→ Emit TradeSignal(stage=PRE, direction=direction, size_pct=size_pct)
+→ persist OpenStage1Position to SQLite via Stage1Repository
+→ emit TradeSignal(stage=PRE, direction=direction, size_pct=size_pct)
 ```
 
 ### Stage 2 — Post-Announcement Decision Tree
 
 ```
-Load OpenStage1Position for ticker from SQLite
+load OpenStage1Position for ticker from Stage1Repository
 
-BEAT announcement:
-  Stage 1 exists + agrees (long)  → add remaining size (1.0 - stage1.size_pct)
-                                    status = CONFIRMED
-  Stage 1 exists + disagrees      → close stage 1, open full reverse short
-                                    status = REVERSED
-  No stage 1                      → fresh PEAD entry at 75% size
+BEAT:
+  stage1 exists + agrees       → add remaining size (1.0 - stage1.size_pct)
+                                  status = CONFIRMED
+  stage1 exists + disagrees    → close stage1, full reverse short
+                                  status = REVERSED
+  no stage1                    → fresh PEAD entry at 75% size
 
-MISS announcement:
-  Mirror of BEAT with short direction
+MISS:
+  mirror of BEAT with short direction
 
 IN_LINE / MIXED:
-  Stage 1 exists                  → EXIT signal, close position flat
-                                    status = EXITED
-  No stage 1                      → no signal
+  stage1 exists                → EXIT signal, close flat
+                                  status = EXITED
+  no stage1                    → no signal
 
 Holding horizon by signal_strength:
   STRONG   → 4 days
@@ -220,12 +220,12 @@ Holding horizon by signal_strength:
   WEAK     → 1 day
 ```
 
-### PipelineState Additions — `graph/state.py`
+### PipelineState Additions
 
-```python
-earnings_surprise: EarningsSurprise | None
-open_stage1:       OpenStage1Position | None
-stage2_action:     Literal["confirm", "reverse", "exit", None]
+```
+earnings_surprise     EarningsSurprise | None
+open_stage1           OpenStage1Position | None
+stage2_action         Literal["confirm", "reverse", "exit", None]
 ```
 
 ---
@@ -234,60 +234,43 @@ stage2_action:     Literal["confirm", "reverse", "exit", None]
 
 Full replacement for `models/signals.py`.
 
-```python
-class SignalDirection(StrEnum):
-    LONG  = "long"
-    SHORT = "short"
-    EXIT  = "exit"       # close existing position, no new directional bet
+```
+SignalDirection   StrEnum: LONG | SHORT | EXIT
+SignalStage       StrEnum: PRE | POST
 
-class SignalStage(StrEnum):
-    PRE  = "pre"         # stage 1 — pre-announcement positioning
-    POST = "post"        # stage 2 — post-announcement PEAD or reversal
-
-class TradeSignal(BaseModel):
-    # Identity
-    id            str         uuid, auto-generated
-    created_at    datetime    auto-generated
-    ticker        str
-
-    # Event context
-    event_type    EventType
-    stage         SignalStage
-    stage1_id     str | None  links stage 2 back to its OpenStage1Position
-
-    # Direction & sizing
-    direction     SignalDirection
-    size_pct      float       (0.0, 1.0]  fraction of max allowed position
-
-    # Risk parameters
-    stop_loss_pct   float     e.g. 0.04 = 4%
-    take_profit_pct float | None   None for event-driven exits
-    horizon_days    int       0 = immediate exit
-
-    # Surprise delta payload (POST stage only)
-    composite_surprise    float | None
-    composite_confidence  float | None
-    signal_strength       Literal["STRONG","MODERATE","WEAK","NONE"] | None
-
-    # Confidence gating
-    confidence_score        float | None   0.0–1.0
-    passed_confidence_gate  bool           default False
-    rejection_reason        str | None
+TradeSignal       BaseModel
+  id                      str           uuid, auto-generated
+  created_at              datetime
+  ticker                  str
+  event_type              EventType
+  stage                   SignalStage
+  stage1_id               str | None    links POST signal to OpenStage1Position
+  direction               SignalDirection
+  size_pct                float         (0.0, 1.0]
+  stop_loss_pct           float
+  take_profit_pct         float | None  None for event-driven exits
+  horizon_days            int           0 = immediate exit
+  composite_surprise      float | None  POST stage only
+  composite_confidence    float | None  POST stage only
+  signal_strength         STRONG|MODERATE|WEAK|NONE|None
+  confidence_score        float | None  0.0–1.0
+  passed_confidence_gate  bool          default False
+  rejection_reason        str | None
 ```
 
 ### Model Validators
 
-**`exit_signal_invariants`** — EXIT signals must have `horizon_days=0` and `take_profit_pct=None`.
+**exit_signal_invariants** — EXIT must have `horizon_days=0` and `take_profit_pct=None`. Hard error.
 
-**`stage1_has_no_surprise`** — PRE stage signals cannot carry `composite_surprise` (report not yet released). Hard error.
+**stage1_has_no_surprise** — PRE stage cannot carry `composite_surprise`. Hard error.
 
-**`stage2_links_to_stage1`** — POST stage signals without `stage1_id` are valid (fresh PEAD entry) but receive a soft warning in `rejection_reason`.
+**stage2_links_to_stage1** — POST without `stage1_id` is valid (fresh PEAD) but logs soft warning in `rejection_reason`.
 
 ### Key Design Decisions
 
-- `passed_confidence_gate` defaults to `False` — every signal starts rejected; confidence logic must explicitly flip it
-- `EXIT` is a first-class `SignalDirection` value, not a flag, keeping `RiskManagerAgent` and `ExecutionAgent` clean
-- `SignalStage` uses readable strings (`"pre"`, `"post"`) for legibility in logs and SQLite trade history
+- `passed_confidence_gate` defaults to `False` — every signal starts rejected
+- `EXIT` is a first-class `SignalDirection` value, not a flag
+- `SignalStage` uses readable strings for legibility in logs and SQLite
 
 ---
 
@@ -295,35 +278,34 @@ class TradeSignal(BaseModel):
 
 ### Architecture
 
-Each signal's `confidence_score` is a weighted composite of four components. Weights vary per event type. A signal only proceeds to `RiskManagerAgent` if `confidence_score >= CONFIDENCE_GATES[event_type]`.
+Each signal's `confidence_score` is a weighted composite of four components. Weights vary per event type. A signal proceeds to `RiskManagerAgent` only if `confidence_score >= CONFIDENCE_GATES[event_type]`.
 
-`RiskManagerAgent` checks `passed_confidence_gate` first — before position limits, drawdown, or conflict checks.
+`RiskManagerAgent` checks `passed_confidence_gate` first — before all other checks.
 
 ### Four Components — `ConfidenceScorer`
 
-**`surprise_score(surprise)`**
-- `min(max(eps_sigma, rev_sigma) / 3.0, 1.0)`
-- Uses the higher of EPS and revenue sigma (market reacts to the more surprising metric)
-- Returns 0.0 if no surprise data
+```
+surprise_score(surprise)
+  min(max(eps_sigma, rev_sigma) / 3.0, 1.0)
+  returns 0.0 if no surprise data
 
-**`sentiment_score(sentiment)`**
-- `sentiment.confidence * abs(sentiment.score)`
-- High confidence weak signal < moderate confidence strong signal
-- Returns 0.0 if no sentiment data
+sentiment_score(sentiment)
+  sentiment.confidence * abs(sentiment.score)
+  returns 0.0 if no sentiment data
 
-**`coverage_score(analyst_count)`**
-- `min(analyst_count / 10.0, 1.0)`, minimum 0.1 if count < 3
-- More analysts = more reliable consensus = more meaningful surprise
+coverage_score(analyst_count)
+  min(analyst_count / 10.0, 1.0), minimum 0.1 if count < 3
 
-**`source_score(source)`**
-- Lookup against a source tier table
-- Tier 1 (sec.gov, businesswire, prnewswire): 0.90–1.00
-- Tier 2 (reuters, bloomberg, wsj, benzinga): 0.75–0.85
-- Tier 3 (yahoo_finance, cnbc, marketwatch): 0.55–0.65
-- Tier 4 (twitter, reddit): 0.15–0.20
-- Unknown: 0.30
+source_score(source)
+  tier lookup:
+    sec.gov, businesswire, prnewswire   0.90–1.00
+    reuters, bloomberg, wsj, benzinga   0.75–0.85
+    yahoo_finance, cnbc, marketwatch    0.55–0.65
+    twitter, reddit                     0.15–0.20
+    unknown                             0.30
+```
 
-### Weight Matrix (per event type)
+### Weight Matrix
 
 | Event Type | surprise | sentiment | coverage | source |
 |---|---|---|---|---|
@@ -348,20 +330,20 @@ Each signal's `confidence_score` is a weighted composite of four components. Wei
 | `SECTOR_MISS_SPILL` | 0.40 | 0.30 | 0.20 | 0.10 |
 | `SUPPLY_CHAIN` | 0.30 | 0.40 | 0.10 | 0.20 |
 
-### Confidence Gates (minimum score to pass)
+### Confidence Gates
 
 | Event Type | Gate | Rationale |
 |---|---|---|
-| `EARN_PRE` | 0.45 | Optionality bet, small size — lower bar acceptable |
-| `EARN_BEAT` | 0.55 | Published number — moderate bar |
+| `EARN_PRE` | 0.45 | Optionality bet, small size |
+| `EARN_BEAT` | 0.55 | Published number |
 | `EARN_MISS` | 0.55 | Same |
-| `EARN_MIXED` | 1.01 | Never passes — no signal generated |
+| `EARN_MIXED` | 1.01 | Never passes |
 | `GUID_UP` | 0.50 | — |
 | `GUID_DOWN` | 0.50 | — |
-| `GUID_WARN` | 0.60 | Off-cycle — must be credible source |
+| `GUID_WARN` | 0.60 | Off-cycle, must be credible |
 | `MA_TARGET` | 0.65 | — |
 | `MA_ACQUIRER` | 0.65 | — |
-| `MA_RUMOUR` | 0.75 | Highest equity threshold — unverified |
+| `MA_RUMOUR` | 0.75 | Highest — unverified |
 | `MA_BREAK` | 0.65 | — |
 | `MA_COUNTER` | 0.65 | — |
 | `REG_ACTION` | 0.60 | — |
@@ -373,7 +355,7 @@ Each signal's `confidence_score` is a weighted composite of four components. Wei
 | `SECTOR_MISS_SPILL` | 0.50 | — |
 | `SUPPLY_CHAIN` | 0.55 | — |
 
-Gates are stored in `config.py` as a `dict[str, float]` and overridable per environment via `.env`.
+Gates stored in `config.py` as `dict[str, float]`, overridable per environment via `.env`.
 
 ---
 
@@ -381,50 +363,40 @@ Gates are stored in `config.py` as a `dict[str, float]` and overridable per envi
 
 ### Architecture Decision
 
-`EarningsCalendarAgent` is a dedicated agent that runs on a **daily cron schedule (07:00 ET, Mon–Fri)**, outside the main LangGraph pipeline. It feeds the pipeline by publishing synthetic `NewsEvent` objects with `event_type=EARN_PRE` to the Redis event bus. The rest of the pipeline is unchanged — it treats calendar-sourced events identically to news-sourced events.
+`EarningsCalendarAgent` is a dedicated agent running on a **daily cron at 07:00 ET Mon–Fri**, outside the main LangGraph pipeline. It publishes synthetic `NewsEvent(event_type=EARN_PRE)` objects to the Redis event bus. The pipeline treats these identically to news-sourced events.
 
 ### Data Providers
 
-**Primary:** `FMPCalendarProvider` — `GET /earning_calendar?from=&to=`  
-**Fallback:** `YFinanceCalendarProvider` — unofficial scraping, no API key, used only when FMP returns empty or raises
-
-Fallback is triggered automatically; no configuration required.
+Primary: `FMPCalendarProvider` — `GET /earning_calendar?from=&to=`  
+Fallback: `YFinanceCalendarProvider` — unofficial, no API key, used when FMP fails
 
 ### Model — `models/calendar.py`
 
 ```
-ReportTiming    StrEnum: PRE_MARKET | POST_MARKET | UNKNOWN
+ReportTiming          StrEnum: PRE_MARKET | POST_MARKET | UNKNOWN
 
-EarningsCalendarEntry   BaseModel
+EarningsCalendarEntry BaseModel
   ticker              str
   report_date         date
   fiscal_quarter      str
   fiscal_year         int
-  timing              ReportTiming  default UNKNOWN
+  timing              ReportTiming    default UNKNOWN
   eps_estimate        float | None
   fetched_at          datetime
   days_until_report   computed
-  is_actionable       computed   True if 2 <= days_until_report <= 5
+  is_actionable       computed        True if 2 <= days_until_report <= 5
 ```
 
-**Actionable window rationale:**
-- Beyond 5 days: signal decays before event; IV not yet elevated
-- Under 2 days: IV already elevated; poor entry economics
+Actionable window: 2–5 days. Beyond 5 = signal decays; under 2 = IV already elevated.
 
-### Provider Protocol — `providers/protocols.py`
+### Provider Protocol
 
-```python
-class CalendarProvider(Protocol):
-    async def get_upcoming_earnings(
-        tickers: list[str],
-        from_date: date,
-        to_date: date,
-    ) -> list[EarningsCalendarEntry]: ...
+```
+CalendarProvider (Protocol)
+  get_upcoming_earnings(tickers, from_date, to_date) → list[EarningsCalendarEntry]
 ```
 
-Implementations:
-- `providers/calendar/fmp.py` — `FMPCalendarProvider`
-- `providers/calendar/yfinance_provider.py` — `YFinanceCalendarProvider`
+Implementations: `providers/calendar/fmp.py`, `providers/calendar/yfinance_provider.py`
 
 ### Agent Behaviour
 
@@ -432,127 +404,339 @@ Implementations:
 EarningsCalendarAgent.run()
   scan_window = today → today + 5 days
   entries = FMP.get_upcoming_earnings(watchlist, window)
-           fallback to yfinance if FMP empty/fails
-  filter  is_actionable entries only
+             fallback to yfinance if FMP empty/fails
+  filter is_actionable only
   for each entry:
     event_id = f"calendar_earn_pre_{ticker}_{report_date}"
-    skip if event_id already in SQLite    (dedup guard)
-    synthesise NewsEvent(event_type=EARN_PRE, source="earnings_calendar")
-    publish → Redis event bus
-    persist entry → SQLite
+    skip if event_id in SQLite (dedup guard)
+    synthesise NewsEvent(EARN_PRE, source="earnings_calendar")
+    publish → Redis
+    persist → SQLite
 ```
 
-Dedup guard reuses the same pattern as `NewsIngestorAgent._is_duplicate()`, ensuring `EARN_PRE` fires exactly once per ticker per report date even if the scheduler misfires.
-
-### Synthesised NewsEvent Fields
+### Synthesised NewsEvent
 
 ```
 event_id        f"calendar_earn_pre_{ticker}_{report_date}"
-ticker          from EarningsCalendarEntry
-headline        "{ticker} scheduled to report {quarter} earnings on {date} ({timing})"
+ticker          from entry
+headline        "{ticker} scheduled to report {quarter} on {date} ({timing})"
 source          "earnings_calendar"
-event_type      EventType.EARN_PRE
-report_date     from entry
-fiscal_quarter  from entry
+event_type      EARN_PRE
 metadata        { days_until_report, eps_estimate, timing }
 ```
 
-### Cron Scheduling — `main.py`
+### Cron Scheduling
 
-Uses `APScheduler` (`apscheduler>=3.10`):
-
-```python
-scheduler.add_job(
-    calendar_agent.run,
-    trigger="cron",
-    hour=7, minute=0,
-    day_of_week="mon-fri",
-    misfire_grace_time=300,
-)
 ```
-
-The scheduler runs alongside the main pipeline loop inside the same async process.
+APScheduler: cron, hour=7, minute=0, day_of_week="mon-fri"
+misfire_grace_time = 300 seconds
+Dependency: apscheduler>=3.10
+```
 
 ---
 
-## 7. End-to-End Flow
+## 7. RiskManagerAgent
 
-### Run A — Stage 1 (T-4 days before earnings, 07:00 ET)
+### Responsibility
+
+Validates `TradeSignal` before `ExecutionAgent`. May approve, reduce size, or reject. Never generates signals.
+
+### Output Model — `RiskValidation` (`models/risk.py`)
 
 ```
-EarningsCalendarAgent (cron)
-  → FMP: AAPL reports in 4 days, beat_rate = 0.72
-  → synthesises NewsEvent(EARN_PRE) → Redis
+RiskValidation    BaseModel
+  approved          bool
+  rejection_reason  str | None
+  original_size     float
+  approved_size     float | None    may be reduced from original
+  checks_run        list[str]       audit trail
+  checked_at        datetime
+```
 
-Pipeline (consuming from bus)
-  NewsIngestorAgent   passes through (source = "earnings_calendar")
-  MarketDataAgent     fetches current OHLCV snapshot
-  FMPEstimatesProvider  returns historical beat rate = 0.72
+### Check Layers (executed in order, fail-fast)
+
+**Layer 1 — Confidence gate**
+```
+if not signal.passed_confidence_gate
+  → REJECT with signal.rejection_reason
+```
+
+**Layer 2a — Drawdown halt**
+```
+drawdown = (peak_value - portfolio_value) / peak_value
+
+if drawdown >= settings.max_drawdown_pct (default 0.10)
+   and signal.direction != EXIT
+  → REJECT
+  set system_halted = True in PipelineState
+  publish SYSTEM_HALTED event to Redis
+
+EXIT signals always bypass this check.
+```
+
+**Layer 2b — Concentration limit**
+```
+is_add_to_existing = signal.stage1_id is not None
+
+if open_position_count >= settings.max_open_positions (default 5)
+   and signal.direction != EXIT
+   and not is_add_to_existing
+  → REJECT
+
+Stage 2 ADD signals are exempt — they extend, not open, a position.
+```
+
+**Layer 3a — Pending order conflict**
+```
+if signal.ticker in pending_order_tickers
+  → REJECT
+```
+
+**Layer 3b — Position size cap (modify, not reject)**
+```
+approved_size = min(signal.size_pct, settings.max_position_pct)  (default 0.15)
+if reduced, log warning and continue
+```
+
+**Layer 3c — Direction conflict**
+```
+if ticker has existing open position in opposite direction
+   and signal.direction != EXIT
+  → REJECT
+```
+
+### LangGraph Routing After Risk
+
+```
+route_after_risk(state)
+  if state.system_halted          → "halt_handler"
+  if not risk_validation.approved → "end"
+  else                            → "execution"
+```
+
+### PipelineState Additions
+
+```
+system_halted           bool                default False
+risk_validation         RiskValidation | None
+peak_portfolio_value    float | None        high-water mark, persisted in SQLite
+```
+
+### Settings Additions
+
+```
+max_position_pct      float   default 0.15
+max_drawdown_pct      float   default 0.10
+max_open_positions    int     default 5
+risk_dry_run          bool    default False   log rejections without blocking
+```
+
+`risk_dry_run` recommended during early paper trading to calibrate thresholds before enforcement.
+
+---
+
+## 8. SQLite ORM — OpenStage1Position
+
+### Design Principle
+
+Two separate objects for two separate concerns:
+
+```
+OpenStage1Position        Pydantic model    in-memory, validated, used by agents
+OpenStage1PositionRow     SQLAlchemy model  persistence only, maps to SQLite table
+```
+
+All DB access goes through `Stage1Repository` — no agent touches the ORM directly.
+
+### Table — `stage1_positions`
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | VARCHAR | PK | uuid string |
+| `ticker` | VARCHAR | NOT NULL, INDEX | fast lookup by ticker |
+| `direction` | VARCHAR | NOT NULL | "long" \| "short" |
+| `size_pct` | FLOAT | NOT NULL | |
+| `entry_price` | FLOAT | NOT NULL | |
+| `opened_at` | DATETIME | NOT NULL | |
+| `expected_report_date` | DATE | NOT NULL, INDEX | expiry scanner queries |
+| `fiscal_quarter` | VARCHAR | NOT NULL | |
+| `historical_beat_rate` | FLOAT | NOT NULL | |
+| `status` | VARCHAR | NOT NULL, INDEX, DEFAULT "open" | Stage1Status value |
+| `updated_at` | DATETIME | NOT NULL, onupdate=now() | |
+
+### Repository — `services/stage1_repository.py`
+
+```
+Stage1Repository
+
+  persist(position: OpenStage1Position) → None
+    upsert into stage1_positions
+    handles re-fired EARN_PRE for same ticker/quarter
+
+  load_open(ticker: str) → OpenStage1Position | None
+    SELECT WHERE ticker=:ticker AND status='open'
+    ORDER BY opened_at DESC LIMIT 1
+
+  update_status(id: str, status: Stage1Status) → None
+    UPDATE SET status=:status, updated_at=now() WHERE id=:id
+
+  load_expired() → list[OpenStage1Position]
+    SELECT WHERE status='open' AND expected_report_date < today
+
+  load_all_open() → list[OpenStage1Position]
+    SELECT WHERE status='open'
+    used by RiskManagerAgent concentration check
+```
+
+### Conversion Helpers
+
+```
+_to_row(position)   Pydantic → ORM row    status = position.status.value
+_from_row(row)      ORM row → Pydantic    status = Stage1Status(row.status)
+```
+
+### Expiry Scanner
+
+```
+ExpiryScanner.run()   cron: 07:15 ET Mon-Fri
+
+  expired = stage1_repo.load_expired()
+  for each:
+    stage1_repo.update_status(id, EXPIRED)
+    log_warning(f"EARN_PRE expired: {ticker} {fiscal_quarter}")
+    publish STAGE1_EXPIRED event to Redis
+```
+
+### Schema Initialisation
+
+```
+services/database.py
+
+def init_db()
+  Base.metadata.create_all(engine)   # picks up OpenStage1PositionRow automatically
+```
+
+### Agent Wiring
+
+```
+SignalGeneratorAgent (_handle_earn_pre)   stage1_repo.persist(position)
+SignalGeneratorAgent (_handle_earn_post)  stage1_repo.load_open(ticker)
+                                          stage1_repo.update_status(id, status)
+RiskManagerAgent (concentration)          stage1_repo.load_all_open()
+ExpiryScanner                             stage1_repo.load_expired()
+                                          stage1_repo.update_status(id, EXPIRED)
+```
+
+---
+
+## 9. End-to-End Flow
+
+### Run A — Stage 1 (T-4 days, 07:00 ET cron)
+
+```
+EarningsCalendarAgent
+  FMP: AAPL reports in 4 days, beat_rate = 0.72
+  synthesises NewsEvent(EARN_PRE) → Redis
+
+Pipeline
+  NewsIngestorAgent       passes through (source="earnings_calendar")
+  MarketDataAgent         fetches OHLCV snapshot
+  FMPEstimatesProvider    returns historical beat rate = 0.72
   SignalGeneratorAgent
-    direction = long, size_pct = 0.33
-    persists OpenStage1Position(status=OPEN) → SQLite
+    direction=long, size_pct=0.33
+    stage1_repo.persist(OpenStage1Position)
     emits TradeSignal(stage=PRE, size=0.33, stop=4%)
-  ConfidenceGate      score vs 0.45 threshold
-  RiskManagerAgent    validates
-  ExecutionAgent      places 33% position on Alpaca
+  ConfidenceGate          score vs 0.45 threshold
+  RiskManagerAgent        layers 1–3 all pass
+  ExecutionAgent          places 33% position on Alpaca
 ```
 
-### Run B — Stage 2 (T+0, post-market announcement)
+### Run B — Stage 2 (T+0, post-market)
 
 ```
-NewsIngestorAgent   classifies EARN_BEAT (EPS +9.2%, rev +4.1%)
-MarketDataAgent     fetches updated snapshot
-FMPEstimatesProvider  returns actual vs consensus → EarningsSurprise built
-  composite_surprise = +11.4, signal_strength = STRONG
-SentimentAnalystAgent  analyses press release + call transcript
-  guidance_sentiment = +0.6 → guidance_direction = BEAT
+NewsIngestorAgent       classifies EARN_BEAT (EPS +9.2%, rev +4.1%)
+MarketDataAgent         fetches updated snapshot
+FMPEstimatesProvider    builds EarningsSurprise
+                        composite_surprise=+11.4, signal_strength=STRONG
+SentimentAnalystAgent   guidance_sentiment=+0.6 → BEAT
 SignalGeneratorAgent
-  loads OpenStage1Position(direction=long) from SQLite
-  stage 1 confirmed → adds remaining 67% of position
-  horizon = 4 days (STRONG)
-  updates status = CONFIRMED
+  stage1_repo.load_open("AAPL") → direction=long, confirmed
+  adds remaining 67%, horizon=4 days
+  stage1_repo.update_status(id, CONFIRMED)
   emits TradeSignal(stage=POST, size=0.67, stop=6%, tp=12%)
-ConfidenceGate      score vs 0.55 threshold
-RiskManagerAgent    full position check
-ExecutionAgent      adds to existing Alpaca position
+ConfidenceGate          score vs 0.55 threshold
+RiskManagerAgent        full 3-layer check
+ExecutionAgent          adds to existing Alpaca position
 ```
 
 ### Run C — PEAD Exit (T+4)
 
 ```
-Triggered by horizon expiry in ExecutionAgent
-Closes full combined position (stage 1 + stage 2)
-Updates OpenStage1Position.status = EXITED
+ExecutionAgent horizon expiry
+  closes full combined position
+  stage1_repo.update_status(id, EXITED)
 ```
+
+### Cron Schedule
+
+| Time (ET) | Job | Purpose |
+|---|---|---|
+| 07:00 Mon–Fri | `EarningsCalendarAgent` | Scan upcoming reports, emit EARN_PRE |
+| 07:15 Mon–Fri | `ExpiryScanner` | Mark stale OPEN positions as EXPIRED |
 
 ---
 
-## 8. New Issues
+## 10. All Issues
 
 | # | Title | File | Depends on |
 |---|---|---|---|
 | 10 | Add `EarningsCalendarEntry` model | `models/calendar.py` | — |
 | 11 | Implement `FMPCalendarProvider` + `YFinanceCalendarProvider` | `providers/calendar/` | #10 |
 | 12 | Implement `EarningsCalendarAgent` with dedup guard | `agents/earnings_calendar.py` | #10, #11 |
-| 13 | Wire cron scheduler into `main.py` | `main.py` | #12 |
+| 13 | Wire cron scheduler into `main.py` | `main.py` | #12, #22 |
 | 14 | Add `EarningsSurprise` + `MetricSurprise` models | `models/surprise.py` | — |
 | 15 | Add `OpenStage1Position` + `Stage1Status` | `models/positions.py` | — |
 | 16 | Update `TradeSignal` model with stage fields | `models/signals.py` | #15 |
 | 17 | Implement `FMPEstimatesProvider` | `providers/estimates/fmp.py` | #14 |
 | 18 | Implement `ConfidenceScorer` + `apply_confidence_gate` | `agents/signal_generator.py` | #14, #16 |
 | 19 | Add `EstimatesProvider` + `CalendarProvider` to protocols | `providers/protocols.py` | #14, #10 |
+| 20 | Add `OpenStage1PositionRow` ORM class | `services/database.py` | #15 |
+| 21 | Implement `Stage1Repository` | `services/stage1_repository.py` | #20 |
+| 22 | Add `ExpiryScanner` cron job | `agents/expiry_scanner.py` | #21 |
+| 23 | Wire `Stage1Repository` into `SignalGeneratorAgent` | `agents/signal_generator.py` | #21 |
+| 24 | Wire `Stage1Repository` into `RiskManagerAgent` | `agents/risk_manager.py` | #21 |
+| 25 | Implement `RiskManagerAgent` full logic | `agents/risk_manager.py` | #16, #21, #26 |
+| 26 | Add `RiskValidation` model | `models/risk.py` | — |
+| 27 | Add `halt_handler` node to LangGraph pipeline | `graph/pipeline.py` | #25 |
 
-### Suggested Implementation Order
+### Implementation Order
 
 ```
-#10 EarningsCalendarEntry
-#14 EarningsSurprise + MetricSurprise
-#15 OpenStage1Position
-#16 TradeSignal updates          ← depends on #15
-#19 Protocol additions           ← depends on #10, #14
-#11 Calendar providers           ← depends on #10
-#17 FMPEstimatesProvider         ← depends on #14
-#12 EarningsCalendarAgent        ← depends on #11
-#18 ConfidenceScorer + gate      ← depends on #14, #16
-#13 Cron scheduler in main.py    ← depends on #12
+Leaf nodes (no dependencies) — start here, can be parallel:
+  #14  EarningsSurprise + MetricSurprise
+  #15  OpenStage1Position + Stage1Status
+  #26  RiskValidation model
+  #10  EarningsCalendarEntry
+
+Second tier:
+  #16  TradeSignal updates             ← #15
+  #19  Protocol additions              ← #14, #10
+  #20  OpenStage1PositionRow ORM       ← #15
+
+Third tier:
+  #11  Calendar providers              ← #10
+  #17  FMPEstimatesProvider            ← #14
+  #21  Stage1Repository                ← #20
+
+Fourth tier:
+  #18  ConfidenceScorer + gate         ← #14, #16
+  #12  EarningsCalendarAgent           ← #11
+  #22  ExpiryScanner                   ← #21
+  #23  SignalGenerator wiring          ← #21
+  #24  RiskManager wiring              ← #21
+  #25  RiskManagerAgent full logic     ← #16, #21, #26
+
+Final tier:
+  #13  Cron scheduler in main.py       ← #12, #22
+  #27  halt_handler pipeline node      ← #25
 ```
