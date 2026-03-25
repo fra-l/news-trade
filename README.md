@@ -75,7 +75,7 @@ SentimentAnalystAgent ←── SentimentProvider (claude | keyword)
 
 - **Python 3.11+**
 - **LangGraph** — multi-agent orchestration via state graph
-- **Anthropic Claude API** — sentiment analysis (`claude-sonnet-4-6`)
+- **Anthropic Claude API** — two-tier LLM routing via `LLMClientFactory`: Haiku for cheap tasks, Sonnet for deep reasoning
 - **Alpaca Markets API** — paper trading execution
 - **RSS / Benzinga / Polygon.io** — news ingestion (switchable)
 - **yfinance / Polygon.io** — market data (switchable)
@@ -115,6 +115,14 @@ SENTIMENT_PROVIDER=claude
 NEWS_PROVIDER=benzinga
 MARKET_DATA_PROVIDER=polygon_paid
 SENTIMENT_PROVIDER=claude
+```
+
+### LLM tier configuration
+
+```env
+LLM_PROVIDER=anthropic                   # 'anthropic' only for now
+LLM_QUICK_MODEL=claude-haiku-4-5-20251001  # cheap/fast: classification, debate rounds
+LLM_DEEP_MODEL=claude-sonnet-4-6           # accurate: confidence scoring, synthesis
 ```
 
 ### Cost controls
@@ -186,7 +194,8 @@ src/news_trade/
 │       └── keyword.py     # Keyword heuristic fallback (free)
 ├── services/
 │   ├── database.py        # SQLAlchemy engine/session
-│   └── event_bus.py       # Redis pub/sub wrapper
+│   ├── event_bus.py       # Redis pub/sub wrapper
+│   └── llm_client.py      # LLMClient Protocol, AnthropicLLMClient, LLMClientFactory
 └── graph/
     ├── state.py           # PipelineState TypedDict
     └── pipeline.py        # LangGraph StateGraph builder
