@@ -358,13 +358,15 @@ def _synthesise_earn_pre(event: NewsEvent, estimates: EstimatesData) -> Sentimen
 
 1. Read `tradingagents-ref/tradingagents/default_config.py` — note the `deep_think_llm` / `quick_think_llm` keys and their defaults.
 2. Read `tradingagents-ref/tradingagents/llm_clients/` — understand the factory pattern and constructor injection.
-3. Add `llm_provider`, `llm_quick_model`, `llm_deep_model` to `config.py` via Claude Code.
-4. Create `services/llm_client.py` with `LLMClient` protocol, `LLMClientFactory`, and `AnthropicLLMClient` via Claude Code.
-5. Add `model_id` and `provider` fields to `SentimentResult` and `TradeSignal` via Claude Code.
+3. ✅ Add `llm_provider`, `llm_quick_model`, `llm_deep_model` to `config.py`.
+4. ✅ Create `services/llm_client.py` with `LLMClient` protocol, `LLMClientFactory`, and `AnthropicLLMClient`.
+5. ✅ Add `provider` field to `SentimentResult`; add `model_id` + `provider` fields to `TradeSignal`.
 6. Update all agent constructors to accept `llm: LLMClientFactory` via Claude Code.
 7. Update `OrchestratorAgent` to instantiate and inject `LLMClientFactory` via Claude Code.
 8. Audit `SentimentAnalystAgent` — tag each call as quick or deep, route accordingly, propagate `model_id` to output models via Claude Code.
-9. Add tests: protocol is satisfied by `AnthropicLLMClient`, factory returns correct tier, `model_id` is present on all output models, unsupported provider raises `ValueError`.
+9. ✅ Add tests: protocol is satisfied by `AnthropicLLMClient`, factory returns correct tier, `model_id` is present on all output models, unsupported provider raises `ValueError`.
+
+> ℹ️ Steps 6–8 are deferred until `SignalGeneratorAgent` is implemented. The current routing happens at the factory level: `get_sentiment_provider()` injects `LLMClientFactory.deep` into `ClaudeSentimentProvider`. Per-call quick/deep routing within agents becomes relevant once agents make multiple distinct LLM calls.
 
 > ✅ Haiku is ~25x cheaper than Sonnet per token. Even routing 50% of calls to Haiku meaningfully cuts daily API spend. The `LLMClient` protocol means adding a second provider later requires writing one new class — no agent changes.
 
@@ -718,12 +720,12 @@ Only `services/llm_client.py` grows (one new class), `pyproject.toml` gains a de
 
 Each pattern is independent — none depends on another. The order below is based on cost impact and implementation complexity.
 
-| Order | Pattern | Rationale |
-|---|---|---|
-| 1 | **B — Deep/Quick LLM Split** | Highest ROI: immediate cost reduction. Establishes the `LLMClient` protocol and `model_id` tracking that everything else builds on. |
-| 2 | **C — Fundamentals Prompt Structure** | Medium complexity. Adds `EstimatesRenderer` and updates `ConfidenceScorer` prompts. Improves scoring consistency before the Pattern A debate is layered on. |
-| 3 | **D — Reflection Loop** | New ORM table + migration. Starts bootstrapping the observed outcomes database immediately so it has data by the time Pattern A is tuned. |
-| 4 | **A — Bull/Bear Debate** | Highest complexity. Depends on Pattern B (needs cheap debate model) and benefits from Pattern C (richer context for debaters). Implement last. |
+| Order | Pattern | Rationale | Status |
+|---|---|---|---|
+| 1 | **B — Deep/Quick LLM Split** | Highest ROI: immediate cost reduction. Establishes the `LLMClient` protocol and `model_id` tracking that everything else builds on. | ✅ Done |
+| 2 | **C — Fundamentals Prompt Structure** | Medium complexity. Adds `EstimatesRenderer` and updates `ConfidenceScorer` prompts. Improves scoring consistency before the Pattern A debate is layered on. | TODO |
+| 3 | **D — Reflection Loop** | New ORM table + migration. Starts bootstrapping the observed outcomes database immediately so it has data by the time Pattern A is tuned. | TODO |
+| 4 | **A — Bull/Bear Debate** | Highest complexity. Depends on Pattern B (needs cheap debate model) and benefits from Pattern C (richer context for debaters). Implement last. | TODO |
 
 > ⚠️ Each pattern should be a separate branch and PR. Do not bundle them. The test suite for each pattern should pass independently before the next pattern begins.
 
@@ -784,25 +786,27 @@ A concise map of exactly which files to read for each pattern, what to look for,
 
 ### 9.1  Files to create
 
-| New file | Pattern | Purpose |
-|---|---|---|
-| `services/llm_client.py` | B | `LLMClientFactory` — deep/quick tier routing |
-| `services/estimates_renderer.py` | C | `EstimatesRenderer` — structured narrative for LLM prompts |
-| `models/debate.py` (or extend `signals.py`) | A | `DebateRound`, `DebateVerdict`, `DebateResult` |
+| New file | Pattern | Purpose | Status |
+|---|---|---|---|
+| `services/llm_client.py` | B | `LLMClientFactory` — deep/quick tier routing | ✅ Done |
+| `services/estimates_renderer.py` | C | `EstimatesRenderer` — structured narrative for LLM prompts | TODO |
+| `models/debate.py` (or extend `signals.py`) | A | `DebateRound`, `DebateVerdict`, `DebateResult` | TODO |
 
 ### 9.2  Files to modify
 
-| Existing file | Pattern(s) | Change summary |
-|---|---|---|
-| `config.py` | A, B | Add `signal_debate_*`, `llm_provider`, `llm_quick_model`, `llm_deep_model` keys |
-| `models/sentiment.py` | B | Add `model_id`, `provider` fields to `SentimentResult` |
-| `models/signals.py` | A, B | Add `debate_result` to `TradeSignal`; add `model_id`, `provider` to `TradeSignal` |
-| `agents/sentiment_analyst.py` | B | Route calls to quick vs deep client; propagate `model_id` to output |
-| `agents/signal_generator.py` | A | Add `_debate_signal()` method and wire into `run()` |
-| `services/database.py` | D | Add `EarningsOutcomeRow` ORM model |
-| `services/confidence_scorer.py` | C | Use `EstimatesRenderer` in `_score_surprise()` |
-| `agents/earnings_calendar.py` | D | Use `load_historical_outcomes()` for beat rate |
-| `Stage1Repository` | D | Add `load_historical_outcomes()` and `record_outcome()` |
+| Existing file | Pattern(s) | Change summary | Status |
+|---|---|---|---|
+| `config.py` | A, B | Add `signal_debate_*`, `llm_provider`, `llm_quick_model`, `llm_deep_model` keys | ✅ B done; A TODO |
+| `models/sentiment.py` | B | Add `provider` field to `SentimentResult` | ✅ Done |
+| `models/signals.py` | A, B | Add `debate_result` to `TradeSignal`; add `model_id`, `provider` to `TradeSignal` | ✅ B done; A TODO |
+| `providers/sentiment/claude.py` | B | Accept `LLMClient`; propagate `model_id`/`provider` to results | ✅ Done |
+| `providers/__init__.py` | B | Inject `LLMClientFactory.deep` into `ClaudeSentimentProvider` | ✅ Done |
+| `agents/sentiment_analyst.py` | B | Route calls to quick vs deep client; propagate `model_id` to output | TODO |
+| `agents/signal_generator.py` | A | Add `_debate_signal()` method and wire into `run()` | TODO |
+| `services/database.py` | D | Add `EarningsOutcomeRow` ORM model | TODO |
+| `services/confidence_scorer.py` | C | Use `EstimatesRenderer` in `_score_surprise()` | TODO |
+| `agents/earnings_calendar.py` | D | Use `load_historical_outcomes()` for beat rate | TODO |
+| `Stage1Repository` | D | Add `load_historical_outcomes()` and `record_outcome()` | TODO |
 
 ### 9.3  Rules
 

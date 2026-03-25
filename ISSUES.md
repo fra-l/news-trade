@@ -121,6 +121,44 @@ free-tier and premium data sources via configuration, without touching agent log
 
 ---
 
+## ~~Pattern B: LLM Client Abstraction Layer (deep/quick split)~~ ✅ Done
+
+**Priority:** P1 — High
+**Depends on:** Phase 0 Provider Layer
+**Labels:** `architecture`, `feature`, `cost-control`
+
+Implemented in commit `e7eee33` on branch `claude/review-trading-spec-vmi3B`.
+
+Introduces a provider-agnostic `LLMClient` Protocol and `LLMClientFactory` that
+routes calls to a cheap quick tier (Haiku) or an accurate deep tier (Sonnet),
+reducing Anthropic API spend for high-throughput tasks.
+
+### Deliverables
+
+| # | Task | Files |
+|---|------|-------|
+| 1 | `LLMResponse`, `LLMClient` Protocol, `AnthropicLLMClient`, `LLMClientFactory` | `services/llm_client.py` |
+| 2 | `llm_provider`, `llm_quick_model`, `llm_deep_model` settings | `config.py` |
+| 3 | `provider` field on `SentimentResult` | `models/sentiment.py` |
+| 4 | `model_id` + `provider` fields on `TradeSignal` | `models/signals.py` |
+| 5 | Refactor `ClaudeSentimentProvider` to accept `LLMClient`; propagate provenance to all results | `providers/sentiment/claude.py` |
+| 6 | Wire `LLMClientFactory.deep` into `ClaudeSentimentProvider` factory | `providers/__init__.py` |
+| 7 | 19 unit tests | `tests/test_llm_client.py` |
+
+### Design decisions
+
+- **`LLMClient.invoke()` is async** — matches the project's async-first convention; the spec pseudocode used `def` but that was pseudocode only
+- **`LLMResponse` exposes `input_tokens` / `output_tokens`** — required so `ClaudeSentimentProvider` can continue its existing daily budget tracking logic
+- **Budget tracking stays in `ClaudeSentimentProvider`** — cost control is a domain concern of the sentiment provider, not a generic LLM client concern
+- **`ClaudeSentimentProvider` accepts `LLMClient` (not `LLMClientFactory`)** — it always uses the deep client; the factory chooses the tier at the injection point in `providers/__init__.py`
+- **Structured output via tool-use** — `AnthropicLLMClient` uses Anthropic tool-use JSON extraction when `response_schema` is provided; consistent with the Claude API's reliable structured-output pattern
+
+### Not yet done (from spec §3.4 checklist)
+
+- Steps 6–8: update all agent constructors to accept `LLMClientFactory`, update `OrchestratorAgent`, audit `SentimentAnalystAgent` for per-call quick/deep routing — deferred to a future PR once `SignalGeneratorAgent` is implemented and the routing opportunities become concrete
+
+---
+
 ## Dependency graph
 
 ```
@@ -132,4 +170,4 @@ free-tier and premium data sources via configuration, without touching agent log
 Phase 0 Provider Layer ✅ (depends on #3, #5)
 ```
 
-All issues and Phase 0 resolved — no remaining work on this branch.
+Pattern B (LLM client abstraction) resolved. Remaining: Pattern A (Bull/Bear Debate), Pattern C (Fundamentals Prompt Structure), Pattern D (Reflection Loop), and the three stub agents.
