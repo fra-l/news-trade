@@ -43,6 +43,20 @@ class Settings(BaseSettings):
         description="Claude model id for sentiment analysis",
     )
 
+    # --- LLM tier configuration ---
+    llm_provider: str = Field(
+        default="anthropic",
+        description="LLM provider: 'anthropic' only for now; protocol-ready for others",
+    )
+    llm_quick_model: str = Field(
+        default="claude-haiku-4-5-20251001",
+        description="Cheap/fast model for classification and debate rounds",
+    )
+    llm_deep_model: str = Field(
+        default="claude-sonnet-4-6",
+        description="Accurate model for confidence scoring and signal synthesis",
+    )
+
     # --- Alpaca Markets ---
     alpaca_api_key: str = Field(default="", description="Alpaca API key id")
     alpaca_secret_key: str = Field(default="", description="Alpaca API secret key")
