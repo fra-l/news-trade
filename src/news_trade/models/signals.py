@@ -35,4 +35,6 @@ class TradeSignal(BaseModel):
     stop_loss: float | None = Field(default=None)
     take_profit: float | None = Field(default=None)
     rationale: str = Field(default="")
+    model_id: str = Field(default="", description="Model that produced this signal")
+    provider: str = Field(default="", description="LLM provider for this signal")
     created_at: datetime = Field(default_factory=datetime.utcnow)

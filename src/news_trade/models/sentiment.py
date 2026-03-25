@@ -41,6 +41,10 @@ class SentimentResult(BaseModel):
     )
     model_id: str = Field(
         default="claude-sonnet-4-6",
-        description="Claude model used for analysis",
+        description="Model used for analysis",
+    )
+    provider: str = Field(
+        default="anthropic",
+        description="LLM provider that produced this result",
     )
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)

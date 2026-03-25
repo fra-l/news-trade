@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime, timezone
-
-import anthropic
+from datetime import UTC, date, datetime
 
 from news_trade.models.events import NewsEvent
 from news_trade.models.sentiment import SentimentLabel, SentimentResult
+from news_trade.services.llm_client import LLMClient
 
 _logger = logging.getLogger(__name__)
 
@@ -46,12 +45,10 @@ class ClaudeSentimentProvider:
 
     def __init__(
         self,
-        api_key: str,
-        model: str = "claude-sonnet-4-6",
+        llm: LLMClient,
         daily_budget: float = 2.00,
     ) -> None:
-        self._client = anthropic.AsyncAnthropic(api_key=api_key)
-        self._model = model
+        self._llm = llm
         self._daily_budget = daily_budget
         self._budget_date: date | None = None
         self._spent_today: float = 0.0
@@ -61,7 +58,7 @@ class ClaudeSentimentProvider:
         return "claude"
 
     def _reset_budget_if_new_day(self) -> None:
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         if self._budget_date != today:
             self._budget_date = today
             self._spent_today = 0.0
@@ -80,7 +77,9 @@ class ClaudeSentimentProvider:
     async def analyse(self, event: NewsEvent) -> SentimentResult:
         """Score a single news event; returns the first ticker's result."""
         results = await self.analyse_batch([event])
-        return results[0] if results else _neutral_result(event)
+        if results:
+            return results[0]
+        return _neutral_result(event, self._llm.model_id, self._llm.provider)
 
     async def analyse_batch(self, events: list[NewsEvent]) -> list[SentimentResult]:
         """Score multiple events, respecting the daily budget cap."""
@@ -93,7 +92,9 @@ class ClaudeSentimentProvider:
                     self._daily_budget,
                     event.event_id,
                 )
-                all_results.append(_neutral_result(event))
+                all_results.append(
+                    _neutral_result(event, self._llm.model_id, self._llm.provider)
+                )
                 continue
             results = await self._call_claude(event)
             all_results.extend(results)
@@ -109,25 +110,23 @@ class ClaudeSentimentProvider:
         )
 
         try:
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=512,
-                system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_message}],
-            )
-        except anthropic.APIError as exc:
+            response = await self._llm.invoke(user_message, system=_SYSTEM_PROMPT)
+        except Exception as exc:
             _logger.error("Claude API error for event %s: %s", event.event_id, exc)
-            return [_neutral_result(event)]
+            return [_neutral_result(event, self._llm.model_id, self._llm.provider)]
 
-        # Track spend
-        usage = response.usage
-        self._record_usage(usage.input_tokens, usage.output_tokens)
-
-        raw = response.content[0].text if response.content else "[]"
-        return _parse_response(raw, event)
+        self._record_usage(response.input_tokens, response.output_tokens)
+        return _parse_response(
+            response.content, event, response.model_id, response.provider
+        )
 
 
-def _parse_response(raw: str, event: NewsEvent) -> list[SentimentResult]:
+def _parse_response(
+    raw: str,
+    event: NewsEvent,
+    model_id: str,
+    provider: str,
+) -> list[SentimentResult]:
     """Parse the JSON array returned by Claude into SentimentResult objects."""
     try:
         items = json.loads(raw)
@@ -135,7 +134,7 @@ def _parse_response(raw: str, event: NewsEvent) -> list[SentimentResult]:
             items = [items]
     except json.JSONDecodeError:
         _logger.warning("Claude returned invalid JSON for event %s", event.event_id)
-        return [_neutral_result(event)]
+        return [_neutral_result(event, model_id, provider)]
 
     results: list[SentimentResult] = []
     for item in items:
@@ -148,15 +147,17 @@ def _parse_response(raw: str, event: NewsEvent) -> list[SentimentResult]:
                     score=float(item["score"]),
                     confidence=float(item["confidence"]),
                     reasoning=item.get("reasoning", ""),
+                    model_id=model_id,
+                    provider=provider,
                 )
             )
         except (KeyError, ValueError) as exc:
             _logger.warning("Skipping malformed Claude sentiment item: %s", exc)
 
-    return results or [_neutral_result(event)]
+    return results or [_neutral_result(event, model_id, provider)]
 
 
-def _neutral_result(event: NewsEvent) -> SentimentResult:
+def _neutral_result(event: NewsEvent, model_id: str, provider: str) -> SentimentResult:
     ticker = event.tickers[0] if event.tickers else "UNKNOWN"
     return SentimentResult(
         event_id=event.event_id,
@@ -165,4 +166,6 @@ def _neutral_result(event: NewsEvent) -> SentimentResult:
         score=0.0,
         confidence=0.0,
         reasoning="Budget exhausted or API error — defaulting to neutral.",
+        model_id=model_id,
+        provider=provider,
     )
