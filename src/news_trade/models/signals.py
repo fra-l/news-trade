@@ -1,9 +1,14 @@
 """Trade signal models."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from enum import StrEnum
+from typing import Annotated
 
 from pydantic import BaseModel, Field
+
+from news_trade.models.surprise import SignalStrength
 
 
 class SignalDirection(StrEnum):
@@ -37,4 +42,23 @@ class TradeSignal(BaseModel):
     rationale: str = Field(default="")
     model_id: str = Field(default="", description="Model that produced this signal")
     provider: str = Field(default="", description="LLM provider for this signal")
+
+    # Pattern C — confidence scoring fields
+    signal_strength: SignalStrength | None = Field(
+        default=None,
+        description="STRONG / MODERATE / WEAK / NONE from EarningsSurprise",
+    )
+    confidence_score: Annotated[float, Field(ge=0.0, le=1.0)] | None = Field(
+        default=None,
+        description="Composite confidence score from ConfidenceScorer (0.0–1.0)",
+    )
+    passed_confidence_gate: bool = Field(
+        default=False,
+        description="True only after ConfidenceScorer.apply_gate() passes",
+    )
+    rejection_reason: str | None = Field(
+        default=None,
+        description="Human-readable reason if passed_confidence_gate is False",
+    )
+
     created_at: datetime = Field(default_factory=datetime.utcnow)

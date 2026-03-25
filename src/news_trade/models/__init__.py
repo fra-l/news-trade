@@ -2,10 +2,17 @@
 
 from news_trade.models.events import NewsEvent
 from news_trade.models.market import MarketSnapshot, OHLCVBar
-from news_trade.models.sentiment import SentimentResult
-from news_trade.models.signals import TradeSignal
 from news_trade.models.orders import Order, OrderStatus
 from news_trade.models.portfolio import PortfolioState, Position
+from news_trade.models.sentiment import SentimentResult
+from news_trade.models.signals import TradeSignal
+from news_trade.models.surprise import (
+    EarningsSurprise,
+    EstimatesData,
+    MetricSurprise,
+    SignalStrength,
+    SurpriseDirection,
+)
 
 __all__ = [
     "NewsEvent",
@@ -17,4 +24,9 @@ __all__ = [
     "OrderStatus",
     "PortfolioState",
     "Position",
+    "EarningsSurprise",
+    "EstimatesData",
+    "MetricSurprise",
+    "SignalStrength",
+    "SurpriseDirection",
 ]

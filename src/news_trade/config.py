@@ -121,6 +121,28 @@ class Settings(BaseSettings):
         description="Sentiment analysis provider: 'claude' or 'keyword'",
     )
 
+    # --- Earnings / surprise thresholds ---
+    earn_beat_pct_threshold: float = Field(
+        default=2.0,
+        description="EPS % surprise above this threshold is classified as BEAT",
+    )
+    earn_miss_pct_threshold: float = Field(
+        default=-2.0,
+        description="EPS % surprise below this threshold is classified as MISS",
+    )
+    earn_strong_sigma_threshold: float = Field(
+        default=2.0,
+        description="Sigma surprise above this contributes to STRONG signal_strength",
+    )
+    earn_min_analyst_count: int = Field(
+        default=3,
+        description="Minimum analyst count for full coverage_score; below this returns 0.1",
+    )
+    earn_guidance_weight: float = Field(
+        default=0.20,
+        description="Weight of guidance_sentiment in composite_surprise calculation",
+    )
+
     # --- Cost controls ---
     claude_daily_budget_usd: float = Field(
         default=2.00,
