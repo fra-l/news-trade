@@ -67,7 +67,10 @@ SentimentAnalystAgent ←── SentimentProvider (claude | keyword)
 | `MarketSnapshot` | `models/market.py` | OHLCV bars + volatility, ATR, and relative volume |
 | `OHLCVBar` | `models/market.py` | Single candlestick bar |
 | `SentimentResult` | `models/sentiment.py` | Sentiment classification with score and confidence |
-| `TradeSignal` | `models/signals.py` | Proposed trade with direction, size, stop-loss, and take-profit |
+| `TradeSignal` | `models/signals.py` | Proposed trade with direction, size, stop-loss, take-profit, and confidence fields |
+| `EstimatesData` | `models/surprise.py` | Pre-announcement consensus estimates (EPS, revenue, analyst range) |
+| `MetricSurprise` | `models/surprise.py` | Post-announcement single-metric surprise with sigma and direction |
+| `EarningsSurprise` | `models/surprise.py` | Composite post-announcement surprise with signal strength tier |
 | `Order` | `models/orders.py` | Alpaca order with lifecycle tracking |
 | `PortfolioState` | `models/portfolio.py` | Account and position snapshot for risk checks |
 
@@ -174,10 +177,11 @@ src/news_trade/
 │   ├── execution.py       # ExecutionAgent
 │   └── orchestrator.py    # OrchestratorAgent
 ├── models/
-│   ├── events.py          # NewsEvent
+│   ├── events.py          # NewsEvent, EventType (coarse + 20 fine-grained)
 │   ├── market.py          # MarketSnapshot, OHLCVBar
 │   ├── sentiment.py       # SentimentResult
-│   ├── signals.py         # TradeSignal
+│   ├── signals.py         # TradeSignal (+ confidence fields)
+│   ├── surprise.py        # EstimatesData, MetricSurprise, EarningsSurprise
 │   ├── orders.py          # Order, OrderStatus
 │   └── portfolio.py       # PortfolioState, Position
 ├── providers/
@@ -193,9 +197,11 @@ src/news_trade/
 │       ├── claude.py      # Claude API with daily budget cap
 │       └── keyword.py     # Keyword heuristic fallback (free)
 ├── services/
-│   ├── database.py        # SQLAlchemy engine/session
-│   ├── event_bus.py       # Redis pub/sub wrapper
-│   └── llm_client.py      # LLMClient Protocol, AnthropicLLMClient, LLMClientFactory
+│   ├── database.py           # SQLAlchemy engine/session
+│   ├── estimates_renderer.py # EstimatesRenderer — FMP estimates → structured narrative
+│   ├── confidence_scorer.py  # ConfidenceScorer — 4-component weighted scorer + gate
+│   ├── event_bus.py          # Redis pub/sub wrapper
+│   └── llm_client.py         # LLMClient Protocol, AnthropicLLMClient, LLMClientFactory
 └── graph/
     ├── state.py           # PipelineState TypedDict
     └── pipeline.py        # LangGraph StateGraph builder

@@ -446,13 +446,16 @@ prompt = SURPRISE_PROMPT.format(
 
 ### 4.4  Step-by-step implementation checklist
 
-1. **Read `fundamentals_analyst.py` carefully.** Focus on how data is structured before the LLM call, not on the agent wiring around it.
-2. Map every FMP field returned by your `EstimatesProvider` to a human-readable label and unit.
-3. Create `services/estimates_renderer.py` with `EstimatesRenderer` via Claude Code.
-4. Implement `compute_pre_surprise_delta()` as pure Python (no LLM call) via Claude Code.
-5. Update `ConfidenceScorer._score_surprise()` to use the renderer via Claude Code.
-6. Update `SURPRISE_PROMPT` template to expect the narrative format, not raw JSON, via Claude Code.
-7. Add unit tests: renderer output is deterministic, delta is within `[-1, 1]`, narrative contains expected fields.
+1. ✅ **Read `fundamentals_analyst.py` carefully.** Focus on how data is structured before the LLM call, not on the agent wiring around it.
+2. ✅ Map every FMP field returned by your `EstimatesProvider` to a human-readable label and unit.
+3. ✅ Create `services/estimates_renderer.py` with `EstimatesRenderer` — pure Python, no LLM call.
+4. ✅ Implement `compute_pre_surprise_delta()` as pure Python — primary path uses `eps_trailing_mean`; fallback uses `mean_eps_surprise`; result clamped to `[-1, 1]`.
+5. ✅ Create `services/confidence_scorer.py` with `ConfidenceScorer` — 4-component weighted matrix keyed by `EventType`; `apply_gate()` stamps result onto `TradeSignal` via `model_copy()`.
+6. ✅ Create `models/surprise.py` — `EstimatesData` (with `estimate_dispersion` computed field), `MetricSurprise` (pct/sigma/direction/confidence), `EarningsSurprise` (composite + signal strength tier).
+7. ✅ Expand `EventType` with 20 fine-grained values (EARN_PRE/BEAT/MISS/MIXED, GUID_*, MA_*, REG_*, sector contagion) while keeping 8 coarse values for backward compatibility.
+8. ✅ Add confidence fields to `TradeSignal`: `signal_strength`, `confidence_score`, `passed_confidence_gate`, `rejection_reason`.
+9. ✅ Add unit tests: 206 tests pass — renderer determinism, delta clamping, all 4 scorer components, gate pass/fail, `EARN_MIXED` always fails.
+10. TODO: Update `SURPRISE_PROMPT` template to use the narrative format when `SignalGeneratorAgent` LLM integration is implemented (depends on Pattern A).
 
 > ℹ️ `estimate_dispersion` (std/mean of analyst estimates) is a particularly useful signal not currently in your `ConfidenceScorer`. High dispersion = low consensus = lower `source_score` weighting. Worth adding as a field to `EstimatesData`.
 
@@ -723,7 +726,7 @@ Each pattern is independent — none depends on another. The order below is base
 | Order | Pattern | Rationale | Status |
 |---|---|---|---|
 | 1 | **B — Deep/Quick LLM Split** | Highest ROI: immediate cost reduction. Establishes the `LLMClient` protocol and `model_id` tracking that everything else builds on. | ✅ Done |
-| 2 | **C — Fundamentals Prompt Structure** | Medium complexity. Adds `EstimatesRenderer` and updates `ConfidenceScorer` prompts. Improves scoring consistency before the Pattern A debate is layered on. | TODO |
+| 2 | **C — Fundamentals Prompt Structure** | Medium complexity. Adds `EstimatesRenderer` and updates `ConfidenceScorer` prompts. Improves scoring consistency before the Pattern A debate is layered on. | ✅ Done |
 | 3 | **D — Reflection Loop** | New ORM table + migration. Starts bootstrapping the observed outcomes database immediately so it has data by the time Pattern A is tuned. | TODO |
 | 4 | **A — Bull/Bear Debate** | Highest complexity. Depends on Pattern B (needs cheap debate model) and benefits from Pattern C (richer context for debaters). Implement last. | TODO |
 

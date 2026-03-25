@@ -48,10 +48,11 @@ src/news_trade/
 │   ├── state.py           # PipelineState TypedDict (shared data between agents)
 │   └── pipeline.py        # LangGraph StateGraph builder + conditional routing
 ├── models/
-│   ├── events.py          # NewsEvent, EventType enum
+│   ├── events.py          # NewsEvent, EventType enum (coarse + 20 fine-grained values)
 │   ├── market.py          # MarketSnapshot, OHLCVBar, ATR / volume metrics
 │   ├── sentiment.py       # SentimentResult, SentimentLabel enum
-│   ├── signals.py         # TradeSignal, SignalDirection enum
+│   ├── signals.py         # TradeSignal, SignalDirection enum (+ confidence fields)
+│   ├── surprise.py        # EstimatesData, MetricSurprise, EarningsSurprise, SignalStrength
 │   ├── orders.py          # Order, OrderSide / Status / Type enums
 │   └── portfolio.py       # PortfolioState, Position
 ├── providers/
@@ -69,18 +70,22 @@ src/news_trade/
 │       └── keyword.py     # KeywordSentimentProvider — heuristic fallback
 ├── services/
 │   ├── database.py        # SQLAlchemy engine + session factory
+│   ├── estimates_renderer.py  # EstimatesRenderer — pure Python FMP → narrative formatter
+│   ├── confidence_scorer.py   # ConfidenceScorer — 4-component weighted scorer + gate
 │   ├── event_bus.py       # Async Redis pub/sub wrapper
 │   ├── llm_client.py      # LLMClient Protocol, AnthropicLLMClient, LLMClientFactory
 │   └── tables.py          # ORM table definitions (NewsEventRow, TradeSignalRow, OrderRow)
 └── py.typed               # PEP 561 marker
 
 tests/
-├── test_models.py         # 44+ Pydantic model tests
-├── test_pipeline.py       # 10+ LangGraph graph construction / routing tests
-├── test_providers.py      # 25+ provider Protocol compliance + factory tests
-├── test_news_ingestor.py  # NewsIngestorAgent with mocked provider
-├── test_llm_client.py     # 19 LLMClient protocol, factory, and invoke tests
-└── test_risk_rules.py     # Placeholder risk tests (all skipped)
+├── test_models.py              # 90+ Pydantic model tests (incl. surprise + confidence fields)
+├── test_pipeline.py            # 10+ LangGraph graph construction / routing tests
+├── test_providers.py           # 25+ provider Protocol compliance + factory tests
+├── test_news_ingestor.py       # NewsIngestorAgent with mocked provider
+├── test_llm_client.py          # 19 LLMClient protocol, factory, and invoke tests
+├── test_estimates_renderer.py  # 19 EstimatesRenderer render + delta tests
+├── test_confidence_scorer.py   # 30+ ConfidenceScorer component + gate tests
+└── test_risk_rules.py          # Placeholder risk tests (all skipped)
 ```
 
 ---
@@ -192,6 +197,11 @@ All configuration comes from environment variables via `pydantic-settings`. Key 
 | `CLAUDE_DAILY_BUDGET_USD` | `2.00` | Hard cap on Claude API spend per day |
 | `SENTIMENT_DRY_RUN` | `false` | Skip real Claude calls; return neutral |
 | `NEWS_KEYWORD_PREFILTER` | `true` | Pre-filter news by keyword before sentiment |
+| `EARN_BEAT_PCT_THRESHOLD` | `2.0` | EPS % surprise above which event is EARN_BEAT |
+| `EARN_MISS_PCT_THRESHOLD` | `-2.0` | EPS % surprise below which event is EARN_MISS |
+| `EARN_STRONG_SIGMA_THRESHOLD` | `2.0` | Sigma threshold for STRONG signal tier |
+| `EARN_MIN_ANALYST_COUNT` | `3` | Minimum analyst count for non-floor coverage score |
+| `EARN_GUIDANCE_WEIGHT` | `0.20` | Weight of guidance sentiment in composite surprise |
 
 Copy `.env.example` to `.env` and populate before running.
 
@@ -295,6 +305,11 @@ uv run pytest -x                 # Stop at first failure
 | SQLAlchemy ORM + tables | Done |
 | Redis event bus | Done |
 | **LLMClient service (deep/quick split)** | **Done** |
+| **EventType fine-grained values (Pattern C)** | **Done** |
+| **Surprise models (EstimatesData, MetricSurprise, EarningsSurprise)** | **Done** |
+| **EstimatesRenderer (Pattern C)** | **Done** |
+| **ConfidenceScorer (Pattern C)** | **Done** |
+| **TradeSignal confidence fields** | **Done** |
 | **SignalGeneratorAgent** | **TODO — stub** |
 | **RiskManagerAgent** | **TODO — stub** |
 | **ExecutionAgent (Alpaca)** | **TODO — stub** |
@@ -329,6 +344,8 @@ All PRs must pass the `tests.yml` check before merging.
 
 5. **Two-tier LLM routing** — `LLMClientFactory` (`services/llm_client.py`) exposes a `.quick` client (Haiku) and a `.deep` client (Sonnet) via the `LLMClient` Protocol. Cheap tasks (classification, extraction, debate rounds) route to quick; expensive tasks (confidence scoring, signal synthesis) route to deep. Adding a second provider (OpenAI, Gemini) requires one new class in `llm_client.py` — no agent changes. Every `SentimentResult` and `TradeSignal` records `model_id` and `provider` for provenance tracking.
 
-6. **LangGraph for orchestration** — Using a typed state graph makes the pipeline inspectable, testable at the graph level, and easy to extend with new conditional branches.
+6. **Deterministic surprise scoring (Pattern C)** — `EstimatesRenderer` converts raw FMP estimates into a structured narrative with pre-computed deltas before any LLM call. `ConfidenceScorer` uses a 4-component weighted matrix (surprise × sentiment × coverage × source) with per-`EventType` weights and confidence gates. `EARN_MIXED` has gate 1.01 (intentionally impossible) to force human review of ambiguous signals. No LLM involvement in the numeric computation — scoring is fully deterministic and testable.
 
-7. **SQLite default** — Zero-config persistence for development; swap to PostgreSQL via `DATABASE_URL` for production.
+7. **LangGraph for orchestration** — Using a typed state graph makes the pipeline inspectable, testable at the graph level, and easy to extend with new conditional branches.
+
+8. **SQLite default** — Zero-config persistence for development; swap to PostgreSQL via `DATABASE_URL` for production.
