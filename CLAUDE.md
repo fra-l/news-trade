@@ -1,14 +1,19 @@
 # CLAUDE.md — AI Assistant Guide for news-trade
 
-This file provides context for AI assistants (Claude Code, etc.) working in this repository.
+This file provides context for AI assistants working in this repository.
+Detailed guidance for specific subdirectories is in nested `CLAUDE.md` files — see the
+**Subdirectory Guides** section below to know when to read them.
 
 ---
 
 ## Project Overview
 
-**news-trade** is a multi-agent, news-driven automated trading system. It ingests financial news, classifies sentiment via the Anthropic Claude API, generates trade signals, manages risk, and executes orders through Alpaca Markets.
+**news-trade** is a multi-agent, news-driven automated trading system. It ingests financial
+news, classifies sentiment via the Anthropic Claude API, generates trade signals, manages
+risk, and executes orders through Alpaca Markets.
 
-The pipeline is orchestrated with **LangGraph** (a stateful agent graph framework). Each stage is an independent agent that reads from and writes to a shared `PipelineState` TypedDict.
+The pipeline is orchestrated with **LangGraph**. Each stage is an independent agent that
+reads from and writes to a shared `PipelineState` TypedDict.
 
 ---
 
@@ -30,69 +35,54 @@ The pipeline is orchestrated with **LangGraph** (a stateful agent graph framewor
 
 ---
 
+## Subdirectory Guides
+
+Read these files when working in the corresponding area. Each one contains the detailed
+conventions, patterns, and status information that would otherwise clutter this file.
+
+| Directory | Read `CLAUDE.md` there when you are… |
+|---|---|
+| `src/news_trade/agents/` | Implementing or extending any agent; understanding which agents are stubs vs done; wiring `Stage1Repository`, `ConfidenceScorer`, or `LLMClientFactory` into `SignalGeneratorAgent` or `RiskManagerAgent` |
+| `src/news_trade/models/` | Adding or modifying Pydantic models; understanding frozen vs mutable, computed fields, or how `EventType` tiers map to signal logic |
+| `src/news_trade/services/` | Using `LLMClientFactory`, `ConfidenceScorer`, `EstimatesRenderer`, or `Stage1Repository`; adding ORM tables; understanding the two-tier LLM routing or Pattern D reflection loop |
+| `src/news_trade/providers/` | Adding a new data provider (news, market, or sentiment); understanding the Protocol abstraction and factory wiring |
+| `tests/` | Writing tests; understanding the `_make(**kwargs)` helper pattern, in-memory SQLite setup, or `AsyncMock` usage |
+
+---
+
 ## Repository Layout
 
 ```
 src/news_trade/
-├── config.py              # Pydantic Settings — all configuration & env vars
+├── config.py              # Pydantic Settings — all env vars (see Configuration below)
 ├── main.py                # Entrypoint: builds pipeline, runs polling loop
-├── agents/
-│   ├── base.py            # Abstract BaseAgent (all agents inherit this)
-│   ├── news_ingestor.py   # Fetch, deduplicate, persist news events (DONE)
-│   ├── market_data.py     # Fetch OHLCV bars + volatility metrics (DONE)
-│   ├── sentiment_analyst.py  # Classify sentiment with Claude or keywords (DONE)
-│   ├── signal_generator.py   # Generate TradeSignals — STUB (NotImplementedError)
-│   ├── risk_manager.py       # Validate signals against risk rules — STUB
-│   └── execution.py          # Place/track Alpaca orders — STUB
+├── agents/                # LangGraph agent nodes — 3 done, 3 stubs → see agents/CLAUDE.md
 ├── graph/
-│   ├── state.py           # PipelineState TypedDict (shared data between agents)
-│   └── pipeline.py        # LangGraph StateGraph builder + conditional routing
-├── models/
-│   ├── events.py          # NewsEvent, EventType enum (coarse + 20 fine-grained values)
-│   ├── market.py          # MarketSnapshot, OHLCVBar, ATR / volume metrics
-│   ├── sentiment.py       # SentimentResult, SentimentLabel enum
-│   ├── signals.py         # TradeSignal, SignalDirection enum (+ confidence fields)
-│   ├── surprise.py        # EstimatesData, MetricSurprise, EarningsSurprise, SignalStrength
-│   ├── orders.py          # Order, OrderSide / Status / Type enums
-│   └── portfolio.py       # PortfolioState, Position
-├── providers/
-│   ├── base.py            # Protocol definitions (structural subtyping)
+│   ├── state.py           # PipelineState TypedDict
+│   └── pipeline.py        # StateGraph builder + conditional routing
+├── models/                # Pydantic data models — 9 files → see models/CLAUDE.md
+├── providers/             # Protocol-based data providers → see providers/CLAUDE.md
+│   ├── base.py            # NewsProvider, MarketDataProvider, SentimentProvider Protocols
 │   ├── __init__.py        # Factory functions: get_*_provider(settings)
-│   ├── news/
-│   │   ├── rss.py         # RSSNewsProvider (free: Yahoo Finance, MarketWatch, SEC)
-│   │   └── benzinga.py    # BenzingaNewsProvider (premium)
-│   ├── market/
-│   │   ├── yfinance.py    # YFinanceMarketProvider (free)
-│   │   ├── polygon_free.py   # PolygonFreeMarketProvider
-│   │   └── polygon_paid.py   # PolygonPaidMarketProvider (Starter+)
-│   └── sentiment/
-│       ├── claude.py      # ClaudeSentimentProvider — uses Claude API, budget-capped
-│       └── keyword.py     # KeywordSentimentProvider — heuristic fallback
-├── services/
-│   ├── database.py        # SQLAlchemy engine + session factory
-│   ├── estimates_renderer.py  # EstimatesRenderer — pure Python FMP → narrative formatter
-│   ├── confidence_scorer.py   # ConfidenceScorer — 4-component weighted scorer + gate
-│   ├── event_bus.py       # Async Redis pub/sub wrapper
+│   ├── news/              # RSSNewsProvider, BenzingaNewsProvider
+│   ├── market/            # YFinance, PolygonFree, PolygonPaid
+│   └── sentiment/         # ClaudeSentimentProvider (budget-capped), KeywordSentimentProvider
+├── services/              # Business logic + persistence → see services/CLAUDE.md
+│   ├── database.py        # Engine + session factory + create_tables()
+│   ├── tables.py          # ORM table definitions (5 tables)
 │   ├── llm_client.py      # LLMClient Protocol, AnthropicLLMClient, LLMClientFactory
-│   └── tables.py          # ORM table definitions (NewsEventRow, TradeSignalRow, OrderRow)
+│   ├── estimates_renderer.py  # Deterministic FMP data → narrative formatter
+│   ├── confidence_scorer.py   # 4-component weighted scorer + confidence gate
+│   ├── stage1_repository.py   # Stage 1 position CRUD + outcome reflection (Pattern D)
+│   └── event_bus.py       # Async Redis pub/sub wrapper
 └── py.typed               # PEP 561 marker
 
-tests/
-├── test_models.py              # 90+ Pydantic model tests (incl. surprise + confidence fields)
-├── test_pipeline.py            # 10+ LangGraph graph construction / routing tests
-├── test_providers.py           # 25+ provider Protocol compliance + factory tests
-├── test_news_ingestor.py       # NewsIngestorAgent with mocked provider
-├── test_llm_client.py          # 19 LLMClient protocol, factory, and invoke tests
-├── test_estimates_renderer.py  # 19 EstimatesRenderer render + delta tests
-├── test_confidence_scorer.py   # 30+ ConfidenceScorer component + gate tests
-└── test_risk_rules.py          # Placeholder risk tests (all skipped)
+tests/                     # pytest suite — see tests/CLAUDE.md for conventions
 ```
 
 ---
 
 ## Pipeline Architecture
-
-The LangGraph pipeline flows through agents in order, with conditional short-circuit logic:
 
 ```
 NewsIngestorAgent
@@ -112,72 +102,16 @@ ExecutionAgent             ← STUB
 END
 ```
 
-The shared state between all agents is `PipelineState` (`graph/state.py`), a `TypedDict` containing lists of `NewsEvent`, `MarketSnapshot`, `SentimentResult`, `TradeSignal`, `Order`, and `PortfolioState`.
-
----
-
-## Agent Design Pattern
-
-All agents inherit from `BaseAgent` (`agents/base.py`) and implement:
-
-```python
-async def run(self, state: PipelineState) -> PipelineState:
-    ...
-```
-
-Agents receive **external dependencies via constructor injection** (not via globals). Example:
-
-```python
-agent = NewsIngestorAgent(
-    settings=settings,
-    provider=get_news_provider(settings),
-    db_session=session,
-    event_bus=bus,
-)
-```
-
-When implementing a new agent:
-1. Subclass `BaseAgent`
-2. Accept provider/service dependencies in `__init__`
-3. Read from `state`, compute, write results back to `state`, return updated `state`
-4. Raise `NotImplementedError` for unimplemented sub-methods rather than silently passing
-
----
-
-## Provider Abstraction Layer
-
-Providers are defined as **Protocols** (`providers/base.py`), enabling structural subtyping without forcing inheritance:
-
-```python
-class NewsProvider(Protocol):
-    async def fetch_news(self, tickers: list[str]) -> list[NewsEvent]: ...
-
-class MarketDataProvider(Protocol):
-    async def get_snapshots(self, tickers: list[str]) -> list[MarketSnapshot]: ...
-
-class SentimentProvider(Protocol):
-    async def analyze(self, event: NewsEvent) -> SentimentResult: ...
-```
-
-**Factory functions** in `providers/__init__.py` select the concrete implementation from `Settings`:
-
-```python
-provider = get_news_provider(settings)        # → RSSNewsProvider or BenzingaNewsProvider
-provider = get_market_data_provider(settings) # → YFinance, PolygonFree, or PolygonPaid
-provider = get_sentiment_provider(settings)   # → ClaudeSentimentProvider or KeywordSentimentProvider
-```
-
-When adding a new provider:
-1. Implement the relevant Protocol in a new file under `providers/<category>/`
-2. Add the provider type to the enum in `config.py`
-3. Wire it into the factory function in `providers/__init__.py`
-4. Add Protocol compliance tests in `tests/test_providers.py`
+`PipelineState` (`graph/state.py`) is a `TypedDict` containing: `news_events`,
+`market_context`, `sentiment_results`, `trade_signals`, `approved_signals`,
+`rejected_signals`, `orders`, `portfolio`, `errors`.
 
 ---
 
 ## Configuration (`config.py`)
 
-All configuration comes from environment variables via `pydantic-settings`. Key settings:
+All settings come from environment variables via `pydantic-settings`. Copy `.env.example`
+to `.env` before running.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -203,89 +137,42 @@ All configuration comes from environment variables via `pydantic-settings`. Key 
 | `EARN_MIN_ANALYST_COUNT` | `3` | Minimum analyst count for non-floor coverage score |
 | `EARN_GUIDANCE_WEIGHT` | `0.20` | Weight of guidance sentiment in composite surprise |
 
-Copy `.env.example` to `.env` and populate before running.
-
 ---
 
 ## Development Workflow
 
-### Setup
-
 ```bash
+# Setup
 uv sync                          # Install all dependencies (including dev extras)
 cp .env.example .env             # Configure environment variables
 docker compose up -d             # Start Redis
-```
 
-### Running
-
-```bash
+# Run
 uv run news-trade                # Start the main polling loop
-```
 
-### Linting & Formatting
-
-```bash
+# Quality
 uv run ruff check src/ tests/    # Lint (rules: E, F, I, N, UP, B, SIM, RUF)
 uv run ruff format src/ tests/   # Auto-format
-```
-
-Ruff replaces both flake8 and isort. Always run `ruff check` before committing. Fix all errors; do not suppress with `# noqa` unless absolutely necessary and commented with a reason.
-
-### Type Checking
-
-```bash
-uv run mypy src/                 # Strict mypy — no implicit Any allowed
-```
-
-All public APIs must be fully typed. Use `from __future__ import annotations` for forward references.
-
-### Testing
-
-```bash
-uv run pytest                    # Run all tests
-uv run pytest tests/test_models.py -v   # Run a specific file
+uv run mypy src/                 # Strict type checking — no implicit Any
+uv run pytest                    # Full test suite
 uv run pytest -x                 # Stop at first failure
 ```
 
-- Async tests use `@pytest.mark.asyncio` and are auto-configured via `pyproject.toml`
-- Use `unittest.mock.AsyncMock` / `MagicMock` for provider/service dependencies
-- Do not make real network calls or hit real APIs in tests
+Always run `ruff check` before committing. Fix all errors; do not suppress with `# noqa`
+unless absolutely necessary with a comment explaining why.
 
 ---
 
 ## Code Conventions
 
-### General
-
-- Python 3.11+ — use `match`/`case`, `tomllib`, `ExceptionGroup` where appropriate
-- Prefer `async def` for I/O-bound operations (all provider calls are async)
-- Use `pydantic.BaseModel` (v2 style) for all data transfer objects
-- Use `dataclasses` only for simple internal structs without validation
-
-### Imports
-
-- Standard library → third-party → local (ruff enforces this via `I` rules)
-- Absolute imports only; no relative imports (`from .foo import bar` is allowed within a package)
-
-### Error Handling
-
-- Raise specific exceptions; never silently swallow errors
-- Log at `WARNING` or `ERROR` level before re-raising or returning a degraded result
-- The `ClaudeSentimentProvider` returns a neutral `SentimentResult` (not an exception) when the daily budget is exhausted — follow this pattern for graceful degradation
-
-### Naming
-
-- Classes: `PascalCase`
-- Functions/methods/variables: `snake_case`
-- Constants: `UPPER_SNAKE_CASE`
-- Private methods: `_single_leading_underscore`
-
-### Pydantic Models
-
-- Always set `model_config = ConfigDict(frozen=True)` for immutable value objects
-- Validate at the boundary; trust internal data after construction
-- Use `Annotated` types for field constraints (e.g., `Annotated[float, Field(ge=0.0)]`)
+- Python 3.11+ — use `match`/`case` where appropriate
+- `async def` for all I/O-bound operations; `sync` for pure computation and DB access
+- `from __future__ import annotations` at the top of every file
+- Standard library → third-party → local imports (ruff `I` rules enforce order)
+- Classes: `PascalCase` · Functions/variables: `snake_case` · Constants: `UPPER_SNAKE_CASE` · Private: `_leading_underscore`
+- Raise specific exceptions; log at `WARNING`/`ERROR` before re-raising
+- Graceful degradation over exceptions for budget/quota limits (see `ClaudeSentimentProvider`)
+- Dependency injection everywhere — no module-level singletons
 
 ---
 
@@ -304,23 +191,28 @@ uv run pytest -x                 # Stop at first failure
 | LangGraph pipeline + routing | Done |
 | SQLAlchemy ORM + tables | Done |
 | Redis event bus | Done |
-| **LLMClient service (deep/quick split)** | **Done** |
-| **EventType fine-grained values (Pattern C)** | **Done** |
+| **LLMClient service — deep/quick split (Pattern B)** | **Done** |
+| **EventType fine-grained values** | **Done** |
 | **Surprise models (EstimatesData, MetricSurprise, EarningsSurprise)** | **Done** |
 | **EstimatesRenderer (Pattern C)** | **Done** |
 | **ConfidenceScorer (Pattern C)** | **Done** |
 | **TradeSignal confidence fields** | **Done** |
+| **Stage1Status + OpenStage1Position models (Pattern D)** | **Done** |
+| **HistoricalOutcomes model (Pattern D)** | **Done** |
+| **Stage1Repository — CRUD + outcome reflection (Pattern D)** | **Done** |
+| **ORM tables: OpenStage1PositionRow, EarningsOutcomeRow (Pattern D)** | **Done** |
 | **SignalGeneratorAgent** | **TODO — stub** |
 | **RiskManagerAgent** | **TODO — stub** |
 | **ExecutionAgent (Alpaca)** | **TODO — stub** |
+| **EarningsCalendarAgent** | **TODO — calls Stage1Repository.load_historical_outcomes()** |
+| **ExpiryScanner** | **TODO — calls Stage1Repository.record_outcome()** |
 
-The three stub agents raise `NotImplementedError` for their core methods. These are the primary areas for future development.
+The three stub agents raise `NotImplementedError`. `EarningsCalendarAgent` and `ExpiryScanner`
+are the next planned additions — both wire into `Stage1Repository` which is now complete.
 
 ---
 
 ## CI/CD
-
-GitHub Actions workflows (`.github/workflows/`):
 
 | Workflow | Trigger | What it does |
 |---|---|---|
@@ -328,24 +220,38 @@ GitHub Actions workflows (`.github/workflows/`):
 | `claude.yml` | `@claude` mention in issues/PRs | Claude Code handles the request |
 | `claude-code-review.yml` | PR opened/updated | Automated code review by Claude |
 
-All PRs must pass the `tests.yml` check before merging.
+All PRs must pass `tests.yml` before merging.
 
 ---
 
 ## Key Design Decisions
 
-1. **Protocol-based providers** — Structural subtyping (not ABC inheritance) allows swapping providers without touching agent code. Test mocks just need to implement the right methods.
+1. **Protocol-based providers** — Structural subtyping (not ABC). Mocks need only implement
+   the called methods. Adding a provider = one new file + one enum value + one factory case.
 
-2. **Dependency injection everywhere** — Agents and services receive their dependencies at construction time. No module-level singletons. This makes unit testing straightforward.
+2. **Dependency injection everywhere** — All agents and services receive dependencies at
+   construction time. No globals or singletons. Makes unit testing straightforward.
 
-3. **Daily budget cap on Claude** — `ClaudeSentimentProvider` tracks cumulative token cost per day and falls back to a neutral result instead of raising once the cap is hit. This prevents runaway API spend.
+3. **Daily budget cap on Claude** — `ClaudeSentimentProvider` falls back to neutral
+   `SentimentResult` (not an exception) when the daily spend cap is hit.
 
-4. **Keyword pre-filter** — When `NEWS_KEYWORD_PREFILTER=true`, news events without relevant financial keywords skip Claude entirely, reducing cost.
+4. **Keyword pre-filter** — `NEWS_KEYWORD_PREFILTER=true` skips Claude for events without
+   relevant financial keywords, cutting API spend.
 
-5. **Two-tier LLM routing** — `LLMClientFactory` (`services/llm_client.py`) exposes a `.quick` client (Haiku) and a `.deep` client (Sonnet) via the `LLMClient` Protocol. Cheap tasks (classification, extraction, debate rounds) route to quick; expensive tasks (confidence scoring, signal synthesis) route to deep. Adding a second provider (OpenAI, Gemini) requires one new class in `llm_client.py` — no agent changes. Every `SentimentResult` and `TradeSignal` records `model_id` and `provider` for provenance tracking.
+5. **Two-tier LLM routing (Pattern B)** — `LLMClientFactory.quick` (Haiku) for cheap tasks
+   (classification, extraction); `.deep` (Sonnet) for expensive tasks (confidence scoring,
+   synthesis). Adding OpenAI/Gemini requires one new class — no agent changes.
 
-6. **Deterministic surprise scoring (Pattern C)** — `EstimatesRenderer` converts raw FMP estimates into a structured narrative with pre-computed deltas before any LLM call. `ConfidenceScorer` uses a 4-component weighted matrix (surprise × sentiment × coverage × source) with per-`EventType` weights and confidence gates. `EARN_MIXED` has gate 1.01 (intentionally impossible) to force human review of ambiguous signals. No LLM involvement in the numeric computation — scoring is fully deterministic and testable.
+6. **Deterministic confidence scoring (Pattern C)** — `EstimatesRenderer` pre-computes
+   surprise deltas; `ConfidenceScorer` applies a per-`EventType` weight matrix. No LLM
+   involvement. `EARN_MIXED` gate is 1.01 — always fails, forcing human review.
 
-7. **LangGraph for orchestration** — Using a typed state graph makes the pipeline inspectable, testable at the graph level, and easy to extend with new conditional branches.
+7. **Reflection loop / observed beat rates (Pattern D)** — `Stage1Repository` records
+   EARN_PRE outcomes to `earnings_outcomes`. After ≥4 quarters per ticker, `load_historical_outcomes()`
+   returns `source='observed'` displacing static FMP data. `record_outcome()` is idempotent
+   (unique constraint on `stage1_id`). System starts in bootstrapping mode (all FMP).
 
-8. **SQLite default** — Zero-config persistence for development; swap to PostgreSQL via `DATABASE_URL` for production.
+8. **LangGraph for orchestration** — Typed state graph makes the pipeline inspectable and
+   testable at the graph level.
+
+9. **SQLite default** — Zero-config for development; swap to PostgreSQL via `DATABASE_URL`.

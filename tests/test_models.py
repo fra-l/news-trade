@@ -8,7 +8,9 @@ from pydantic import ValidationError
 from news_trade.models.events import EventType, NewsEvent
 from news_trade.models.market import MarketSnapshot, OHLCVBar
 from news_trade.models.orders import Order, OrderSide, OrderStatus, OrderType
+from news_trade.models.outcomes import HistoricalOutcomes
 from news_trade.models.portfolio import PortfolioState, Position
+from news_trade.models.positions import OpenStage1Position, Stage1Status
 from news_trade.models.sentiment import SentimentLabel, SentimentResult
 from news_trade.models.signals import SignalDirection, TradeSignal
 from news_trade.models.surprise import (
@@ -564,3 +566,147 @@ class TestEstimatesData:
     def test_revenue_below_zero_raises(self):
         with pytest.raises(ValidationError):
             self._make(revenue_estimate=-1.0)
+
+
+# ---------------------------------------------------------------------------
+# Stage1Status
+# ---------------------------------------------------------------------------
+
+
+class TestStage1Status:
+    def test_all_values(self):
+        assert Stage1Status.OPEN == "open"
+        assert Stage1Status.CONFIRMED == "confirmed"
+        assert Stage1Status.REVERSED == "reversed"
+        assert Stage1Status.EXITED == "exited"
+        assert Stage1Status.EXPIRED == "expired"
+
+    def test_is_str_enum(self):
+        assert isinstance(Stage1Status.OPEN, str)
+
+    def test_roundtrip_from_string(self):
+        assert Stage1Status("confirmed") is Stage1Status.CONFIRMED
+
+
+# ---------------------------------------------------------------------------
+# OpenStage1Position
+# ---------------------------------------------------------------------------
+
+
+class TestOpenStage1Position:
+    def _make(self, **kwargs):
+        defaults = dict(
+            id="abc-123",
+            ticker="AAPL",
+            direction="long",
+            size_pct=0.33,
+            entry_price=175.00,
+            opened_at=datetime(2026, 3, 20, 14, 30, tzinfo=UTC),
+            expected_report_date=date(2026, 3, 25),
+            fiscal_quarter="Q2 2026",
+            historical_beat_rate=0.72,
+        )
+        return OpenStage1Position(**(defaults | kwargs))
+
+    def test_happy_path(self):
+        pos = self._make()
+        assert pos.ticker == "AAPL"
+        assert pos.direction == "long"
+        assert pos.status == Stage1Status.OPEN
+
+    def test_status_defaults_to_open(self):
+        assert self._make().status == Stage1Status.OPEN
+
+    def test_serialization_round_trip(self):
+        pos = self._make()
+        restored = OpenStage1Position.model_validate(pos.model_dump())
+        assert restored.id == pos.id
+        assert restored.status == pos.status
+        assert restored.historical_beat_rate == pos.historical_beat_rate
+
+    def test_days_to_report_is_int(self):
+        assert isinstance(self._make().days_to_report, int)
+
+    def test_days_to_report_positive_for_future_date(self):
+        from datetime import timedelta
+
+        pos = self._make(expected_report_date=date.today() + timedelta(days=5))
+        assert pos.days_to_report > 0
+
+    def test_days_to_report_negative_for_past_date(self):
+        from datetime import timedelta
+
+        pos = self._make(expected_report_date=date.today() - timedelta(days=1))
+        assert pos.days_to_report < 0
+
+    def test_size_pct_below_min_raises(self):
+        with pytest.raises(ValidationError):
+            self._make(size_pct=0.24)
+
+    def test_size_pct_above_max_raises(self):
+        with pytest.raises(ValidationError):
+            self._make(size_pct=0.41)
+
+    def test_entry_price_zero_raises(self):
+        with pytest.raises(ValidationError):
+            self._make(entry_price=0.0)
+
+    def test_entry_price_negative_raises(self):
+        with pytest.raises(ValidationError):
+            self._make(entry_price=-1.0)
+
+    def test_beat_rate_above_one_raises(self):
+        with pytest.raises(ValidationError):
+            self._make(historical_beat_rate=1.01)
+
+    def test_beat_rate_below_zero_raises(self):
+        with pytest.raises(ValidationError):
+            self._make(historical_beat_rate=-0.01)
+
+
+# ---------------------------------------------------------------------------
+# HistoricalOutcomes
+# ---------------------------------------------------------------------------
+
+
+class TestHistoricalOutcomes:
+    def _make(self, **kwargs):
+        defaults = dict(source="observed", beat_rate=0.75, sample_size=8)
+        return HistoricalOutcomes(**(defaults | kwargs))
+
+    def test_observed_source_with_beat_rate(self):
+        h = self._make()
+        assert h.source == "observed"
+        assert h.beat_rate == 0.75
+
+    def test_fmp_source_with_none_beat_rate(self):
+        h = self._make(source="fmp", beat_rate=None, sample_size=2)
+        assert h.source == "fmp"
+        assert h.beat_rate is None
+
+    def test_beat_rate_above_one_raises(self):
+        with pytest.raises(ValidationError):
+            self._make(beat_rate=1.01)
+
+    def test_beat_rate_below_zero_raises(self):
+        with pytest.raises(ValidationError):
+            self._make(beat_rate=-0.01)
+
+    def test_sample_size_negative_raises(self):
+        with pytest.raises(ValidationError):
+            self._make(sample_size=-1)
+
+    def test_optional_fields_default_to_none(self):
+        h = self._make()
+        assert h.mean_eps_surprise is None
+        assert h.mean_price_move_1d is None
+
+    def test_serialization_round_trip(self):
+        h = self._make(mean_eps_surprise=2.5, mean_price_move_1d=1.1)
+        restored = HistoricalOutcomes.model_validate(h.model_dump())
+        assert restored.beat_rate == h.beat_rate
+        assert restored.mean_eps_surprise == h.mean_eps_surprise
+
+    def test_literal_source_invalid_raises(self):
+        with pytest.raises(ValidationError):
+            self._make(source="bloomberg")

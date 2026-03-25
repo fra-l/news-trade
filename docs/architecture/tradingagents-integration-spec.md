@@ -571,13 +571,15 @@ stage1_size = base_size * beat_rate         # existing sizing logic unchanged
 ### 5.4  Step-by-step implementation checklist
 
 1. Read `tradingagents-ref/tradingagents/graph/` reflection logic — focus on how outcomes are written back and how they are queried on the next run.
-2. Add `EarningsOutcomeRow` to `services/database.py` with Alembic migration via Claude Code.
-3. Add `HistoricalOutcomes` Pydantic model to `models/signals.py` via Claude Code.
-4. Implement `Stage1Repository.load_historical_outcomes()` via Claude Code.
-5. Implement `Stage1Repository.record_outcome()` via Claude Code.
-6. Wire `record_outcome()` into the `ExpiryScanner` cron when it flips a position to `CONFIRMED`, `REVERSED`, or `EXPIRED` via Claude Code.
-7. Wire `load_historical_outcomes()` into `EarningsCalendarAgent` beat rate lookup via Claude Code.
-8. Add unit tests: outcomes accumulate correctly, FMP fallback triggers on empty history, `beat_rate` matches hand-computed value.
+2. ✅ Add `OpenStage1PositionRow` + `EarningsOutcomeRow` to `services/tables.py` (no Alembic — `create_all()` approach used throughout; `stage1_id` has `unique=True` for idempotency).
+3. ✅ Add `HistoricalOutcomes` Pydantic model to `models/outcomes.py` (new file — not `models/signals.py`; kept separate as it is an input to signal generation, not a signal itself).
+4. ✅ Implement `Stage1Repository.load_historical_outcomes()` in `services/stage1_repository.py`.
+5. ✅ Implement `Stage1Repository.record_outcome()` — idempotent via `IntegrityError` catch.
+6. ✅ Implement base `Stage1Repository` methods: `persist()` (upsert on ticker+quarter), `load_open()`, `update_status()`, `load_expired()`, `load_all_open()`.
+7. ✅ Add `Stage1Status` StrEnum + `OpenStage1Position` frozen Pydantic model to `models/positions.py`.
+8. ✅ Add 39 unit tests in `tests/test_stage1_repository.py` (in-memory SQLite; covers beat rate, FMP fallback, lookback limit, EXPIRED exclusion, idempotency).
+9. TODO: Wire `record_outcome()` into `ExpiryScanner` when it flips a position to `CONFIRMED`, `REVERSED`, or `EXPIRED`.
+10. TODO: Wire `load_historical_outcomes()` into `EarningsCalendarAgent` beat rate lookup.
 
 > ℹ️ The system starts in **bootstrapping mode** — all `load_historical_outcomes()` calls fall back to FMP because the outcomes table is empty. After ~8 quarters of live operation, observed data takes over. This is by design.
 
@@ -727,7 +729,7 @@ Each pattern is independent — none depends on another. The order below is base
 |---|---|---|---|
 | 1 | **B — Deep/Quick LLM Split** | Highest ROI: immediate cost reduction. Establishes the `LLMClient` protocol and `model_id` tracking that everything else builds on. | ✅ Done |
 | 2 | **C — Fundamentals Prompt Structure** | Medium complexity. Adds `EstimatesRenderer` and updates `ConfidenceScorer` prompts. Improves scoring consistency before the Pattern A debate is layered on. | ✅ Done |
-| 3 | **D — Reflection Loop** | New ORM table + migration. Starts bootstrapping the observed outcomes database immediately so it has data by the time Pattern A is tuned. | TODO |
+| 3 | **D — Reflection Loop** | New ORM table + migration. Starts bootstrapping the observed outcomes database immediately so it has data by the time Pattern A is tuned. | ✅ Done |
 | 4 | **A — Bull/Bear Debate** | Highest complexity. Depends on Pattern B (needs cheap debate model) and benefits from Pattern C (richer context for debaters). Implement last. | TODO |
 
 > ⚠️ Each pattern should be a separate branch and PR. Do not bundle them. The test suite for each pattern should pass independently before the next pattern begins.

@@ -7,9 +7,9 @@ for persistent storage, auditing, and deduplication.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import DateTime, Float, Integer, String, Text
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -69,6 +69,65 @@ class TradeSignalRow(Base):
     )
     rejection_reason: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class OpenStage1PositionRow(Base):
+    """Persisted Stage 1 pre-earnings position.
+
+    The primary key is a UUID string (not an autoincrement integer) because
+    ``OpenStage1Position.id`` is generated in application code before the row
+    is inserted.  This allows the Pydantic model and the DB row to share the
+    same identifier without a round-trip.
+    """
+
+    __tablename__ = "stage1_positions"
+
+    id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    direction: Mapped[str] = mapped_column(String(8), nullable=False)
+    size_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    expected_report_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    fiscal_quarter: Mapped[str] = mapped_column(String(32), nullable=False)
+    historical_beat_rate: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, index=True, default="open"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class EarningsOutcomeRow(Base):
+    """Recorded earnings outcome for Pattern D reflection loop.
+
+    Appended by Stage1Repository.record_outcome() when a Stage 1 position
+    resolves.  ``stage1_id`` is unique so that a double call to record_outcome()
+    for the same position is a silent no-op (idempotent).
+    """
+
+    __tablename__ = "earnings_outcomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    report_date: Mapped[date] = mapped_column(Date, nullable=False)
+    stage1_id: Mapped[str | None] = mapped_column(
+        String(256),
+        ForeignKey("stage1_positions.id"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+    final_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    eps_surprise_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_move_1d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
 
 
 class OrderRow(Base):
