@@ -70,6 +70,7 @@ src/news_trade/
 ├── services/
 │   ├── database.py        # SQLAlchemy engine + session factory
 │   ├── event_bus.py       # Async Redis pub/sub wrapper
+│   ├── llm_client.py      # LLMClient Protocol, AnthropicLLMClient, LLMClientFactory
 │   └── tables.py          # ORM table definitions (NewsEventRow, TradeSignalRow, OrderRow)
 └── py.typed               # PEP 561 marker
 
@@ -78,6 +79,7 @@ tests/
 ├── test_pipeline.py       # 10+ LangGraph graph construction / routing tests
 ├── test_providers.py      # 25+ provider Protocol compliance + factory tests
 ├── test_news_ingestor.py  # NewsIngestorAgent with mocked provider
+├── test_llm_client.py     # 19 LLMClient protocol, factory, and invoke tests
 └── test_risk_rules.py     # Placeholder risk tests (all skipped)
 ```
 
@@ -184,6 +186,9 @@ All configuration comes from environment variables via `pydantic-settings`. Key 
 | `NEWS_PROVIDER` | `rss` | `rss` or `benzinga` |
 | `MARKET_DATA_PROVIDER` | `yfinance` | `yfinance`, `polygon_free`, `polygon_paid` |
 | `SENTIMENT_PROVIDER` | `claude` | `claude` or `keyword` |
+| `LLM_PROVIDER` | `anthropic` | LLM backend; `anthropic` only for now |
+| `LLM_QUICK_MODEL` | `claude-haiku-4-5-20251001` | Cheap model for classification / debate rounds |
+| `LLM_DEEP_MODEL` | `claude-sonnet-4-6` | Accurate model for confidence scoring / synthesis |
 | `CLAUDE_DAILY_BUDGET_USD` | `2.00` | Hard cap on Claude API spend per day |
 | `SENTIMENT_DRY_RUN` | `false` | Skip real Claude calls; return neutral |
 | `NEWS_KEYWORD_PREFILTER` | `true` | Pre-filter news by keyword before sentiment |
@@ -289,6 +294,7 @@ uv run pytest -x                 # Stop at first failure
 | LangGraph pipeline + routing | Done |
 | SQLAlchemy ORM + tables | Done |
 | Redis event bus | Done |
+| **LLMClient service (deep/quick split)** | **Done** |
 | **SignalGeneratorAgent** | **TODO — stub** |
 | **RiskManagerAgent** | **TODO — stub** |
 | **ExecutionAgent (Alpaca)** | **TODO — stub** |
@@ -321,6 +327,8 @@ All PRs must pass the `tests.yml` check before merging.
 
 4. **Keyword pre-filter** — When `NEWS_KEYWORD_PREFILTER=true`, news events without relevant financial keywords skip Claude entirely, reducing cost.
 
-5. **LangGraph for orchestration** — Using a typed state graph makes the pipeline inspectable, testable at the graph level, and easy to extend with new conditional branches.
+5. **Two-tier LLM routing** — `LLMClientFactory` (`services/llm_client.py`) exposes a `.quick` client (Haiku) and a `.deep` client (Sonnet) via the `LLMClient` Protocol. Cheap tasks (classification, extraction, debate rounds) route to quick; expensive tasks (confidence scoring, signal synthesis) route to deep. Adding a second provider (OpenAI, Gemini) requires one new class in `llm_client.py` — no agent changes. Every `SentimentResult` and `TradeSignal` records `model_id` and `provider` for provenance tracking.
 
-6. **SQLite default** — Zero-config persistence for development; swap to PostgreSQL via `DATABASE_URL` for production.
+6. **LangGraph for orchestration** — Using a typed state graph makes the pipeline inspectable, testable at the graph level, and easy to extend with new conditional branches.
+
+7. **SQLite default** — Zero-config persistence for development; swap to PostgreSQL via `DATABASE_URL` for production.
