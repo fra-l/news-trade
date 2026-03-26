@@ -220,3 +220,188 @@ class TestSettings:
     def test_enum_coercion_from_string(self):
         s = _make_settings(news_provider="benzinga")
         assert s.news_provider == NewsProviderType.BENZINGA
+
+
+# ---------------------------------------------------------------------------
+# ClaudeSentimentProvider — helper
+# ---------------------------------------------------------------------------
+
+
+def _make_provider(
+    mock_llm_response: str = "[]",
+    daily_budget: float = 10.0,
+    quick_model_id: str = "claude-haiku-4-5-20251001",
+    deep_model_id: str = "claude-sonnet-4-6",
+):
+    """Build a ClaudeSentimentProvider with separate quick/deep mock clients."""
+    from news_trade.providers.sentiment.claude import ClaudeSentimentProvider
+    from news_trade.services.llm_client import LLMResponse
+
+    def _make_client(model_id: str) -> AsyncMock:
+        response = LLMResponse(
+            content=mock_llm_response,
+            model_id=model_id,
+            provider="anthropic",
+            input_tokens=10,
+            output_tokens=5,
+        )
+        client = AsyncMock()
+        client.invoke = AsyncMock(return_value=response)
+        client.model_id = model_id
+        client.provider = "anthropic"
+        return client
+
+    mock_quick = _make_client(quick_model_id)
+    mock_deep = _make_client(deep_model_id)
+
+    mock_factory = MagicMock()
+    mock_factory.quick = mock_quick
+    mock_factory.deep = mock_deep
+
+    provider = ClaudeSentimentProvider(llm=mock_factory, daily_budget=daily_budget)
+    return provider, mock_quick, mock_deep
+
+
+def _make_event_with_type(
+    event_type: EventType, event_id: str = "ev-1", ticker: str = "AAPL"
+) -> NewsEvent:
+    return NewsEvent(
+        event_id=event_id,
+        headline="Test headline",
+        summary="Test summary",
+        source="test",
+        tickers=[ticker],
+        published_at=NOW,
+        event_type=event_type,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ClaudeSentimentProvider — tier routing
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeProviderTierRouting:
+    """Verify correct LLM tier is selected per event type."""
+
+    async def test_earn_pre_uses_deep(self):
+        provider, mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.EARN_PRE)
+        await provider.analyse(event)
+        mock_deep.invoke.assert_called_once()
+        mock_quick.invoke.assert_not_called()
+
+    async def test_earn_beat_uses_deep(self):
+        provider, mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.EARN_BEAT)
+        await provider.analyse(event)
+        mock_deep.invoke.assert_called_once()
+        mock_quick.invoke.assert_not_called()
+
+    async def test_earn_miss_uses_deep(self):
+        provider, mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.EARN_MISS)
+        await provider.analyse(event)
+        mock_deep.invoke.assert_called_once()
+        mock_quick.invoke.assert_not_called()
+
+    async def test_ma_target_uses_quick(self):
+        provider, mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.MA_TARGET)
+        await provider.analyse(event)
+        mock_quick.invoke.assert_called_once()
+        mock_deep.invoke.assert_not_called()
+
+    async def test_guidance_uses_quick(self):
+        provider, mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.GUIDANCE)
+        await provider.analyse(event)
+        mock_quick.invoke.assert_called_once()
+        mock_deep.invoke.assert_not_called()
+
+    async def test_earn_mixed_uses_quick(self):
+        provider, mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.EARN_MIXED)
+        await provider.analyse(event)
+        mock_quick.invoke.assert_called_once()
+        mock_deep.invoke.assert_not_called()
+
+    async def test_other_uses_quick(self):
+        provider, mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.OTHER)
+        await provider.analyse(event)
+        mock_quick.invoke.assert_called_once()
+        mock_deep.invoke.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# ClaudeSentimentProvider — EARN_PRE system prompt
+# ---------------------------------------------------------------------------
+
+
+class TestEarnPrePrompt:
+    """Verify EARN_PRE events use the specialised system prompt."""
+
+    async def test_earn_pre_receives_earn_pre_system_prompt(self):
+        from news_trade.providers.sentiment.claude import _EARN_PRE_SYSTEM_PROMPT
+
+        provider, _mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.EARN_PRE)
+        await provider.analyse(event)
+        _, call_kwargs = mock_deep.invoke.call_args
+        assert call_kwargs["system"] == _EARN_PRE_SYSTEM_PROMPT
+
+    async def test_non_earn_pre_receives_standard_system_prompt(self):
+        from news_trade.providers.sentiment.claude import _SYSTEM_PROMPT
+
+        provider, mock_quick, _mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.MA_TARGET)
+        await provider.analyse(event)
+        _, call_kwargs = mock_quick.invoke.call_args
+        assert call_kwargs["system"] == _SYSTEM_PROMPT
+
+    async def test_earn_beat_receives_standard_system_prompt(self):
+        from news_trade.providers.sentiment.claude import _SYSTEM_PROMPT
+
+        provider, _mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.EARN_BEAT)
+        await provider.analyse(event)
+        _, call_kwargs = mock_deep.invoke.call_args
+        assert call_kwargs["system"] == _SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# ClaudeSentimentProvider — model_id provenance
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeProviderModelIdProvenance:
+    """Verify SentimentResult.model_id reflects the actual model used."""
+
+    async def test_model_id_reflects_quick_model_for_non_earn(self):
+        valid_response = (
+            '[{"ticker":"AAPL","label":"BULLISH","score":0.5,'
+            '"confidence":0.8,"reasoning":"test"}]'
+        )
+        provider, _mock_quick, _mock_deep = _make_provider(
+            mock_llm_response=valid_response,
+            quick_model_id="claude-haiku-4-5-20251001",
+            deep_model_id="claude-sonnet-4-6",
+        )
+        event = _make_event_with_type(EventType.MA_TARGET)
+        result = await provider.analyse(event)
+        assert result.model_id == "claude-haiku-4-5-20251001"
+
+    async def test_model_id_reflects_deep_model_for_earn_pre(self):
+        valid_response = (
+            '[{"ticker":"AAPL","label":"BULLISH","score":0.5,'
+            '"confidence":0.8,"reasoning":"test"}]'
+        )
+        provider, _mock_quick, _mock_deep = _make_provider(
+            mock_llm_response=valid_response,
+            quick_model_id="claude-haiku-4-5-20251001",
+            deep_model_id="claude-sonnet-4-6",
+        )
+        event = _make_event_with_type(EventType.EARN_PRE)
+        result = await provider.analyse(event)
+        assert result.model_id == "claude-sonnet-4-6"

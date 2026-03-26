@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime
 
 from news_trade.models.events import NewsEvent
 from news_trade.models.sentiment import SentimentLabel, SentimentResult
-from news_trade.services.llm_client import LLMClient
+from news_trade.services.llm_client import LLMClient, LLMClientFactory
 
 _logger = logging.getLogger(__name__)
 
@@ -31,6 +31,33 @@ Return a JSON array where each element has these exact keys:
 Return ONLY the JSON array with no surrounding text or markdown fences.
 """
 
+_EARN_PRE_SYSTEM_PROMPT = """\
+You are a financial news sentiment analyst specialising in pre-earnings analysis.
+The event you are analysing is a PRE-ANNOUNCEMENT — a report date is upcoming but
+earnings have not yet been released.
+
+Assess sentiment based on:
+- Analyst estimate revisions and consensus trend in the headline/summary
+- Any forward guidance signals
+- Historical beat/miss reputation implied by the text
+- Market positioning language (e.g. "raised guidance", "cautious outlook")
+
+Return a JSON array where each element has these exact keys:
+  ticker        (string)  — the stock symbol
+  label         (string)  — one of: VERY_BULLISH, BULLISH, NEUTRAL, BEARISH, VERY_BEARISH
+  score         (float)   — sentiment score from -1.0 (very bearish) to +1.0 (very bullish)
+  confidence    (float)   — confidence from 0.0 to 1.0
+  reasoning     (string)  — one-sentence explanation citing the specific signal
+
+Return ONLY the JSON array with no surrounding text or markdown fences.
+"""
+
+_EARN_DEEP_TYPES = frozenset({
+    "earn_pre", "earn_beat", "earn_miss",
+    # coarse fallback
+    "earnings",
+})
+
 
 class ClaudeSentimentProvider:
     """Calls the Anthropic Claude API to score news sentiment.
@@ -45,10 +72,12 @@ class ClaudeSentimentProvider:
 
     def __init__(
         self,
-        llm: LLMClient,
+        llm: LLMClientFactory,
         daily_budget: float = 2.00,
     ) -> None:
-        self._llm = llm
+        self._factory = llm
+        # keep self._llm pointing to deep for budget tracking (conservative rates)
+        self._llm = llm.deep
         self._daily_budget = daily_budget
         self._budget_date: date | None = None
         self._spent_today: float = 0.0
@@ -73,6 +102,13 @@ class ClaudeSentimentProvider:
             + output_tokens * self._OUTPUT_COST_PER_TOKEN
         )
         self._spent_today += cost
+
+    def _select_client(self, event: NewsEvent) -> LLMClient:
+        """Return deep for high-stakes earnings events, quick for everything else."""
+        event_type_str = str(event.event_type).lower()
+        if event_type_str in _EARN_DEEP_TYPES:
+            return self._factory.deep
+        return self._factory.quick
 
     async def analyse(self, event: NewsEvent) -> SentimentResult:
         """Score a single news event; returns the first ticker's result."""
@@ -101,6 +137,16 @@ class ClaudeSentimentProvider:
         return all_results
 
     async def _call_claude(self, event: NewsEvent) -> list[SentimentResult]:
+        client = self._select_client(event)
+
+        # Select system prompt based on event type
+        event_type_str = str(event.event_type).lower()
+        system_prompt = (
+            _EARN_PRE_SYSTEM_PROMPT
+            if event_type_str == "earn_pre"
+            else _SYSTEM_PROMPT
+        )
+
         tickers_str = ", ".join(event.tickers) if event.tickers else "unspecified"
         user_message = (
             f"Headline: {event.headline}\n"
@@ -110,7 +156,7 @@ class ClaudeSentimentProvider:
         )
 
         try:
-            response = await self._llm.invoke(user_message, system=_SYSTEM_PROMPT)
+            response = await client.invoke(user_message, system=system_prompt)
         except Exception as exc:
             _logger.error("Claude API error for event %s: %s", event.event_id, exc)
             return [_neutral_result(event, self._llm.model_id, self._llm.provider)]

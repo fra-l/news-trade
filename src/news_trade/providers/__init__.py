@@ -57,9 +57,8 @@ def get_sentiment_provider(settings: Settings | None = None) -> SentimentProvide
         case SentimentProviderType.CLAUDE:
             from news_trade.providers.sentiment.claude import ClaudeSentimentProvider
             from news_trade.services.llm_client import LLMClientFactory
-            factory = LLMClientFactory(cfg)
             return ClaudeSentimentProvider(
-                llm=factory.deep,
+                llm=LLMClientFactory(cfg),
                 daily_budget=cfg.claude_daily_budget_usd,
             )
         case SentimentProviderType.KEYWORD:
