@@ -7,6 +7,7 @@ rejected by risk).
 
 from __future__ import annotations
 
+from alpaca.trading.client import TradingClient
 from langgraph.graph import END, StateGraph
 
 from news_trade.agents.execution import ExecutionAgent
@@ -22,8 +23,10 @@ from news_trade.providers import (
     get_news_provider,
     get_sentiment_provider,
 )
+from news_trade.services.database import build_engine, build_session_factory
 from news_trade.services.event_bus import EventBus
 from news_trade.services.llm_client import LLMClientFactory
+from news_trade.services.tables import Base
 
 # Node name constants
 NEWS = "news_ingestor"
@@ -65,7 +68,20 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     sentiment_agent = SentimentAnalystAgent(settings, event_bus, provider=get_sentiment_provider(settings))
     signal_agent = SignalGeneratorAgent(settings, event_bus, llm=LLMClientFactory(settings))
     risk_agent = RiskManagerAgent(settings, event_bus)
-    exec_agent = ExecutionAgent(settings, event_bus)
+    alpaca_client = TradingClient(
+        api_key=settings.alpaca_api_key,
+        secret_key=settings.alpaca_secret_key,
+        paper=True,
+    )
+    exec_engine = build_engine(settings)
+    Base.metadata.create_all(exec_engine)
+    exec_session = build_session_factory(settings)()
+    exec_agent = ExecutionAgent(
+        settings,
+        event_bus,
+        alpaca_client=alpaca_client,
+        session=exec_session,
+    )
 
     graph = StateGraph(PipelineState)
 
