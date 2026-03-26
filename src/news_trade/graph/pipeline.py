@@ -23,6 +23,7 @@ from news_trade.providers import (
     get_sentiment_provider,
 )
 from news_trade.services.event_bus import EventBus
+from news_trade.services.llm_client import LLMClientFactory
 
 # Node name constants
 NEWS = "news_ingestor"
@@ -62,7 +63,7 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     news_agent = NewsIngestorAgent(settings, event_bus, provider=get_news_provider(settings))
     market_agent = MarketDataAgent(settings, event_bus, provider=get_market_data_provider(settings))
     sentiment_agent = SentimentAnalystAgent(settings, event_bus, provider=get_sentiment_provider(settings))
-    signal_agent = SignalGeneratorAgent(settings, event_bus)
+    signal_agent = SignalGeneratorAgent(settings, event_bus, llm=LLMClientFactory(settings))
     risk_agent = RiskManagerAgent(settings, event_bus)
     exec_agent = ExecutionAgent(settings, event_bus)
 

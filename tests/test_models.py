@@ -12,7 +12,13 @@ from news_trade.models.outcomes import HistoricalOutcomes
 from news_trade.models.portfolio import PortfolioState, Position
 from news_trade.models.positions import OpenStage1Position, Stage1Status
 from news_trade.models.sentiment import SentimentLabel, SentimentResult
-from news_trade.models.signals import SignalDirection, TradeSignal
+from news_trade.models.signals import (
+    DebateResult,
+    DebateRound,
+    DebateVerdict,
+    SignalDirection,
+    TradeSignal,
+)
 from news_trade.models.surprise import (
     EarningsSurprise,
     EstimatesData,
@@ -710,3 +716,98 @@ class TestHistoricalOutcomes:
     def test_literal_source_invalid_raises(self):
         with pytest.raises(ValidationError):
             self._make(source="bloomberg")
+
+
+# ---------------------------------------------------------------------------
+# DebateRound / DebateVerdict / DebateResult (Pattern A)
+# ---------------------------------------------------------------------------
+
+
+class TestDebateModels:
+    def _make_round(self, **kwargs) -> DebateRound:
+        defaults: dict[str, object] = dict(
+            round_number=0,
+            bull_argument="Strong earnings growth expected.",
+            bear_argument="Macro headwinds persist.",
+        )
+        return DebateRound(**(defaults | kwargs))
+
+    def _make_result(self, **kwargs) -> DebateResult:
+        defaults: dict[str, object] = dict(
+            verdict=DebateVerdict.CONFIRM,
+        )
+        return DebateResult(**(defaults | kwargs))
+
+    def _make_signal(self, **kwargs) -> TradeSignal:
+        defaults: dict[str, object] = dict(
+            signal_id="sig-debate",
+            event_id="evt-debate",
+            ticker="AAPL",
+            direction=SignalDirection.LONG,
+            conviction=0.80,
+            suggested_qty=20,
+        )
+        return TradeSignal(**(defaults | kwargs))
+
+    def test_debate_round_happy_path(self):
+        r = self._make_round()
+        assert r.round_number == 0
+        assert "earnings" in r.bull_argument
+        assert "Macro" in r.bear_argument
+
+    def test_debate_round_serialization(self):
+        r = self._make_round()
+        restored = DebateRound.model_validate(r.model_dump())
+        assert restored == r
+
+    def test_debate_round_is_frozen(self):
+        r = self._make_round()
+        with pytest.raises(ValidationError):
+            r.round_number = 99  # type: ignore[misc]
+
+    def test_debate_result_defaults(self):
+        result = self._make_result()
+        assert result.verdict == DebateVerdict.CONFIRM
+        assert result.confidence_delta == 0.0
+        assert result.rounds == []
+
+    def test_debate_result_with_rounds(self):
+        round0 = self._make_round(round_number=0)
+        round1 = self._make_round(round_number=1, bull_argument="Even stronger case.")
+        result = self._make_result(
+            verdict=DebateVerdict.REDUCE,
+            confidence_delta=-0.05,
+            rounds=[round0, round1],
+        )
+        assert result.verdict == DebateVerdict.REDUCE
+        assert result.confidence_delta == -0.05
+        assert len(result.rounds) == 2
+
+    def test_debate_result_serialization(self):
+        r = self._make_round()
+        result = self._make_result(
+            verdict=DebateVerdict.REJECT,
+            confidence_delta=-0.15,
+            rounds=[r],
+        )
+        restored = DebateResult.model_validate(result.model_dump())
+        assert restored == result
+
+    def test_trade_signal_debate_result_field_defaults_none(self):
+        sig = self._make_signal()
+        assert sig.debate_result is None
+
+    def test_trade_signal_with_debate_result(self):
+        result = self._make_result(verdict=DebateVerdict.CONFIRM, confidence_delta=0.05)
+        sig = self._make_signal(debate_result=result)
+        assert sig.debate_result is not None
+        assert sig.debate_result.verdict == DebateVerdict.CONFIRM
+        assert sig.debate_result.confidence_delta == 0.05
+
+    def test_trade_signal_serialization_with_debate_result(self):
+        result = self._make_result(
+            verdict=DebateVerdict.REDUCE, rounds=[self._make_round()]
+        )
+        sig = self._make_signal(debate_result=result)
+        restored = TradeSignal.model_validate(sig.model_dump())
+        assert restored.debate_result == sig.debate_result
