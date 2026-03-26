@@ -7,9 +7,10 @@ methods satisfies a Protocol — no inheritance required.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
+from news_trade.models.calendar import EarningsCalendarEntry
 from news_trade.models.events import NewsEvent
 from news_trade.models.market import MarketSnapshot
 from news_trade.models.sentiment import SentimentResult
@@ -74,4 +75,29 @@ class SentimentProvider(Protocol):
         self, events: list[NewsEvent]
     ) -> list[SentimentResult]:
         """Score multiple events (may batch into fewer API calls)."""
+        ...
+
+
+@runtime_checkable
+class CalendarProvider(Protocol):
+    """Fetches upcoming earnings calendar entries."""
+
+    @property
+    def name(self) -> str:
+        """Human-readable provider name for logging (e.g. 'fmp_calendar')."""
+        ...
+
+    async def get_upcoming_earnings(
+        self,
+        tickers: list[str],
+        from_date: date,
+        to_date: date,
+    ) -> list[EarningsCalendarEntry]:
+        """Return scheduled earnings for the given tickers within the date window.
+
+        Args:
+            tickers: Watchlist symbols to filter by.
+            from_date: Start of scan window (inclusive).
+            to_date: End of scan window (inclusive).
+        """
         ...

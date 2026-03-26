@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     benzinga_api_key: str = Field(default="", description="Benzinga API key")
     polygon_api_key: str = Field(default="", description="Polygon.io API key")
 
+    # --- Financial Modeling Prep (earnings calendar + estimates) ---
+    fmp_api_key: str = Field(default="", description="Financial Modeling Prep API key")
+
     # --- Redis ---
     redis_url: str = Field(
         default="redis://localhost:6379/0",

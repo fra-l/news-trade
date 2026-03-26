@@ -16,6 +16,7 @@ All models use Pydantic v2. Value objects are frozen (`ConfigDict(frozen=True)`)
 | `surprise.py` | `SurpriseDirection`, `SignalStrength`, `MetricSurprise`, `EarningsSurprise`, `EstimatesData` | Yes |
 | `positions.py` | `Stage1Status` (StrEnum), `OpenStage1Position` | Yes |
 | `outcomes.py` | `HistoricalOutcomes` | Yes |
+| `calendar.py` | `ReportTiming` (StrEnum), `EarningsCalendarEntry` | Yes |
 | `orders.py` | `OrderSide`, `OrderStatus`, `OrderType`, `Order` | Yes |
 | `portfolio.py` | `Position`, `PortfolioState` | Yes |
 
@@ -50,6 +51,7 @@ EstimatesData ──────────────────────
 OpenStage1Position (id = stage1_id) ───────► EarningsOutcomeRow.stage1_id (FK)
 OpenStage1Position ────────────────────────► TradeSignal.stage1_id (links POST to PRE)
 HistoricalOutcomes ────────────────────────► EarningsCalendarAgent (beat rate for sizing)
+EarningsCalendarEntry ─────────────────────► EarningsCalendarAgent._synthesise_event() → NewsEvent
 ```
 
 ---
@@ -70,6 +72,8 @@ Models with `@computed_field` properties (derived at access time, not stored):
 | `EarningsSurprise` | `signal_strength` | `STRONG/MODERATE/WEAK/NONE` by threshold |
 | `EstimatesData` | `estimate_dispersion` | `(high-low) / (4 * \|estimate\|)` |
 | `OpenStage1Position` | `days_to_report` | `(expected_report_date - date.today()).days` |
+| `EarningsCalendarEntry` | `days_until_report` | `(report_date - date.today()).days` |
+| `EarningsCalendarEntry` | `is_actionable` | `2 <= days_until_report <= 5` |
 
 `days_to_report` is time-relative — negative means the report date has passed.
 

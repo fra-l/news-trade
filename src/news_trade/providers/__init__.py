@@ -14,7 +14,7 @@ from news_trade.config import (
     Settings,
     get_settings,
 )
-from news_trade.providers.base import MarketDataProvider, NewsProvider, SentimentProvider
+from news_trade.providers.base import CalendarProvider, MarketDataProvider, NewsProvider, SentimentProvider
 
 
 def get_news_provider(settings: Settings | None = None) -> NewsProvider:
@@ -67,3 +67,18 @@ def get_sentiment_provider(settings: Settings | None = None) -> SentimentProvide
         case _:
             from news_trade.providers.sentiment.keyword import KeywordSentimentProvider
             return KeywordSentimentProvider()
+
+
+def get_calendar_provider(settings: Settings | None = None) -> CalendarProvider:
+    """Return the primary CalendarProvider.
+
+    Returns FMPCalendarProvider when an FMP API key is configured (preferred —
+    provides eps_estimate and timing). Falls back to YFinanceCalendarProvider
+    when no key is set.
+    """
+    cfg = settings or get_settings()
+    if cfg.fmp_api_key:
+        from news_trade.providers.calendar.fmp import FMPCalendarProvider
+        return FMPCalendarProvider(api_key=cfg.fmp_api_key)
+    from news_trade.providers.calendar.yfinance_provider import YFinanceCalendarProvider
+    return YFinanceCalendarProvider()

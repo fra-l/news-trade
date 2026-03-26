@@ -690,9 +690,9 @@ ExecutionAgent horizon expiry
 
 | # | Title | File | Depends on |
 |---|---|---|---|
-| 10 | Add `EarningsCalendarEntry` model | `models/calendar.py` | — |
-| 11 | Implement `FMPCalendarProvider` + `YFinanceCalendarProvider` | `providers/calendar/` | #10 |
-| 12 | Implement `EarningsCalendarAgent` with dedup guard | `agents/earnings_calendar.py` | #10, #11 |
+| ~~10~~ | ~~Add `EarningsCalendarEntry` model~~ ✅ | `models/calendar.py` | — |
+| ~~11~~ | ~~Implement `FMPCalendarProvider` + `YFinanceCalendarProvider`~~ ✅ | `providers/calendar/` | #10 |
+| ~~12~~ | ~~Implement `EarningsCalendarAgent` with dedup guard~~ ✅ | `agents/earnings_calendar.py` | #10, #11 |
 | 13 | Wire cron scheduler into `main.py` | `main.py` | #12, #22 |
 | 14 | Add `EarningsSurprise` + `MetricSurprise` models | `models/surprise.py` | — |
 | 15 | Add `OpenStage1Position` + `Stage1Status` | `models/positions.py` | — |
@@ -724,13 +724,13 @@ Second tier:
   #20  OpenStage1PositionRow ORM       ← #15
 
 Third tier:
-  #11  Calendar providers              ← #10
+  #11  Calendar providers ✅            ← #10 ✅
   #17  FMPEstimatesProvider            ← #14
   #21  Stage1Repository                ← #20
 
 Fourth tier:
   #18  ConfidenceScorer + gate         ← #14, #16
-  #12  EarningsCalendarAgent           ← #11
+  #12  EarningsCalendarAgent ✅         ← #11 ✅
   #22  ExpiryScanner                   ← #21
   #23  SignalGenerator wiring          ← #21
   #24  RiskManager wiring              ← #21

@@ -15,7 +15,7 @@ compute their stage, write results back, and return the updated state.
 | `SignalGeneratorAgent` | `signal_generator.py` | **Done — Pattern A implemented** |
 | `RiskManagerAgent` | `risk_manager.py` | **STUB — all methods raise `NotImplementedError`** |
 | `ExecutionAgent` | `execution.py` | **Done — Alpaca paper trading integration** |
-| `EarningsCalendarAgent` | `earnings_calendar.py` | **TODO — next to implement** |
+| `EarningsCalendarAgent` | `earnings_calendar.py` | **Done — daily cron, outside LangGraph pipeline** |
 | `ExpiryScanner` | `expiry_scanner.py` | **TODO** |
 | `OrchestratorAgent` | `orchestrator.py` | Not used — pipeline built via `graph/pipeline.py` directly |
 
@@ -47,7 +47,10 @@ repositories) are injected in the subclass `__init__` — never fetched from glo
 | `SignalGeneratorAgent` | `sentiment_results`, `market_context` | `trade_signals` |
 | `RiskManagerAgent` | `trade_signals`, `portfolio` | `approved_signals`, `rejected_signals` |
 | `ExecutionAgent` | `approved_signals` | `orders` |
-| `EarningsCalendarAgent` | — (runs independently) | `news_events` (EARN_PRE), `estimates` (EstimatesData per ticker) |
+| `EarningsCalendarAgent` | — (reads `settings.watchlist`) | `news_events`, `errors` |
+
+`EarningsCalendarAgent` runs **outside** the main pipeline on a daily cron. It publishes
+synthetic `EARN_PRE` events to Redis; the pipeline picks them up as regular news.
 
 Full `PipelineState` schema lives in `graph/state.py`.
 
@@ -155,3 +158,27 @@ models, and upserts every order to `OrderRow` via the injected `Session`.
 Module-level helpers: `_signal_to_order_side()` (maps direction + portfolio → `OrderSide`),
 `_alpaca_to_order()` (maps alpaca-py `Order` → internal `Order`; unknown statuses fall back
 to `SUBMITTED`).
+
+---
+
+### `EarningsCalendarAgent` ✅ Done
+
+Runs **outside** the LangGraph pipeline on a daily cron (07:00 ET Mon–Fri).
+
+Key dependencies to inject:
+- `primary: CalendarProvider` — `FMPCalendarProvider` (preferred; has `eps_estimate` + timing)
+- `fallback: CalendarProvider` — `YFinanceCalendarProvider` (no API key, used if FMP fails)
+- `engine: Engine` — SQLAlchemy engine for dedup check against `NewsEventRow`
+
+Core logic:
+- Scans `today → today + 5 days` for watchlist tickers
+- Filters to `entry.is_actionable` (2–5 days ahead)
+- Deduplicates via `event_id = f"calendar_earn_pre_{ticker}_{report_date}"`
+- Synthesises `NewsEvent(event_type=EARN_PRE, source="earnings_calendar")`
+- Publishes to Redis; persists to `NewsEventRow`
+- Falls back to `YFinanceCalendarProvider` if primary returns empty or raises
+
+Use `get_calendar_provider(settings)` from `providers/__init__.py` to obtain the
+primary provider. Always pass `YFinanceCalendarProvider()` as the fallback.
+
+See `docs/architecture/event-driven-signal-layer.md §6` for the full specification.
