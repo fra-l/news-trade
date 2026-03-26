@@ -44,9 +44,19 @@ All provider methods are `async`. Test mocks implement only the methods the test
 | Sentiment | `sentiment/claude.py` | `ClaudeSentimentProvider` | Paid | `ANTHROPIC_API_KEY` |
 | Sentiment | `sentiment/keyword.py` | `KeywordSentimentProvider` | Free | — |
 
-`ClaudeSentimentProvider` injects `LLMClientFactory.deep` and enforces a daily budget cap
-(`settings.claude_daily_budget_usd`). When the cap is hit it returns a neutral `SentimentResult`
-rather than raising.
+`ClaudeSentimentProvider` injects a full `LLMClientFactory` and selects the LLM tier per
+event inside `_select_client()`:
+
+| Event types | Tier | Reason |
+|---|---|---|
+| `EARN_PRE`, `EARN_BEAT`, `EARN_MISS`, `EARNINGS` | `.deep` (Sonnet) | High-stakes; quality affects capital allocation |
+| All other types (M&A, guidance, macro, analyst, etc.) | `.quick` (Haiku) | Simple label + score; ~25× cheaper |
+
+`EARN_PRE` events also receive a specialised system prompt (`_EARN_PRE_SYSTEM_PROMPT`) that
+instructs the model to reason from pre-announcement signals. `self._llm` always points to
+`.deep` so budget cost estimates remain conservative even for quick-tier calls.
+Enforces a daily budget cap (`settings.claude_daily_budget_usd`); returns a neutral
+`SentimentResult` (not an exception) when the cap is hit.
 
 ---
 

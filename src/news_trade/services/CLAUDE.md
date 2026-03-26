@@ -27,8 +27,9 @@ factory.quick   # AnthropicLLMClient(haiku) — cheap, fast
 factory.deep    # AnthropicLLMClient(sonnet) — accurate, slower
 ```
 
-**Route to `quick`:** event_type classification, ticker extraction, dedup checks, debate rounds.
-**Route to `deep`:** confidence scoring, EARN_PRE synthesis, debate verdict.
+**Route to `quick`:** event_type classification, ticker extraction, dedup checks, debate rounds,
+non-earnings sentiment (M&A, guidance, macro, analyst ratings, EARN_MIXED).
+**Route to `deep`:** confidence scoring, debate verdict, EARN_PRE / EARN_BEAT / EARN_MISS sentiment.
 
 `LLMClient.invoke()` is `async`. Pass `response_schema=MyModel` to get structured JSON output
 (Anthropic tool-use internally). Every response includes `model_id` and `provider` for provenance.
