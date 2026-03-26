@@ -156,6 +156,18 @@ class Settings(BaseSettings):
         default=True,
         description="Pre-filter articles by ticker keyword before Claude analysis",
     )
+    signal_debate_rounds: int = Field(
+        default=0,
+        description="Number of bull/bear debate rounds per signal (0 = disabled)",
+    )
+    signal_debate_model: str = Field(
+        default="claude-haiku-4-5-20251001",
+        description="Model for debate rounds (quick/cheap)",
+    )
+    signal_debate_threshold: float = Field(
+        default=0.70,
+        description="Only debate signals whose confidence_score exceeds this value",
+    )
 
 
 def get_settings() -> Settings:

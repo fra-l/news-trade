@@ -37,6 +37,9 @@ def mock_settings() -> MagicMock:
     m.market_data_provider = MarketDataProviderType.YFINANCE
     m.sentiment_provider = SentimentProviderType.KEYWORD
     m.watchlist = ["AAPL"]
+    m.llm_provider = "anthropic"
+    m.llm_quick_model = "claude-haiku-4-5-20251001"
+    m.llm_deep_model = "claude-sonnet-4-6"
     return m
 
 

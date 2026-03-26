@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from news_trade.models.surprise import SignalStrength
 
@@ -15,6 +15,35 @@ class SignalDirection(StrEnum):
     LONG = "long"
     SHORT = "short"
     CLOSE = "close"
+
+
+class DebateRound(BaseModel):
+    """A single round of the bull/bear debate."""
+
+    model_config = ConfigDict(frozen=True)
+
+    round_number: int
+    bull_argument: str
+    bear_argument: str
+
+
+class DebateVerdict(StrEnum):
+    CONFIRM = "CONFIRM"
+    REDUCE = "REDUCE"
+    REJECT = "REJECT"
+
+
+class DebateResult(BaseModel):
+    """Outcome of the bull/bear debate for a signal."""
+
+    model_config = ConfigDict(frozen=True)
+
+    verdict: DebateVerdict
+    confidence_delta: float = Field(
+        default=0.0,
+        description="Signed adjustment applied to confidence_score after debate",
+    )
+    rounds: list[DebateRound] = Field(default_factory=list)
 
 
 class TradeSignal(BaseModel):
@@ -50,7 +79,7 @@ class TradeSignal(BaseModel):
     )
     confidence_score: Annotated[float, Field(ge=0.0, le=1.0)] | None = Field(
         default=None,
-        description="Composite confidence score from ConfidenceScorer (0.0–1.0)",
+        description="Composite confidence score from ConfidenceScorer (0.0-1.0)",
     )
     passed_confidence_gate: bool = Field(
         default=False,
@@ -59,6 +88,12 @@ class TradeSignal(BaseModel):
     rejection_reason: str | None = Field(
         default=None,
         description="Human-readable reason if passed_confidence_gate is False",
+    )
+
+    # Pattern A — debate result
+    debate_result: DebateResult | None = Field(
+        default=None,
+        description="Bull/bear debate outcome; None if debate was skipped",
     )
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
