@@ -12,7 +12,7 @@ All models use Pydantic v2. Value objects are frozen (`ConfigDict(frozen=True)`)
 | `events.py` | `EventType` (StrEnum), `NewsEvent` | Yes |
 | `market.py` | `OHLCVBar`, `MarketSnapshot` | Yes |
 | `sentiment.py` | `SentimentLabel` (StrEnum), `SentimentResult` | Yes |
-| `signals.py` | `SignalDirection` (StrEnum), `TradeSignal` | **No** — mutable, updated by `ConfidenceScorer.apply_gate()` and `Stage1Repository` |
+| `signals.py` | `SignalDirection` (StrEnum), `DebateRound`, `DebateVerdict` (StrEnum), `DebateResult`, `TradeSignal` | `DebateRound`, `DebateResult` frozen; `TradeSignal` **No** — mutable, updated via `model_copy()` |
 | `surprise.py` | `SurpriseDirection`, `SignalStrength`, `MetricSurprise`, `EarningsSurprise`, `EstimatesData` | Yes |
 | `positions.py` | `Stage1Status` (StrEnum), `OpenStage1Position` | Yes |
 | `outcomes.py` | `HistoricalOutcomes` | Yes |
@@ -88,6 +88,23 @@ rejection_reason: str | None               # populated when gate fails
 
 Every signal starts with `passed_confidence_gate=False`. `RiskManagerAgent` rejects
 any signal where this is still `False`.
+
+---
+
+## TradeSignal Debate Field (Pattern A)
+
+Added to `TradeSignal` by `SignalGeneratorAgent._debate_signal()`:
+
+```python
+debate_result: DebateResult | None = None  # None if debate was skipped
+```
+
+`DebateResult` (frozen) holds the `DebateVerdict` (`CONFIRM`/`REDUCE`/`REJECT`), a
+`confidence_delta` (applied to `confidence_score`), and the list of `DebateRound` objects.
+Each `DebateRound` (frozen) stores `round_number`, `bull_argument`, and `bear_argument`.
+
+The debate only runs when `signal_debate_rounds > 0` (default 0 — disabled) **and**
+`confidence_score >= signal_debate_threshold` (default 0.70).
 
 ---
 

@@ -201,14 +201,17 @@ unless absolutely necessary with a comment explaining why.
 | **HistoricalOutcomes model (Pattern D)** | **Done** |
 | **Stage1Repository — CRUD + outcome reflection (Pattern D)** | **Done** |
 | **ORM tables: OpenStage1PositionRow, EarningsOutcomeRow (Pattern D)** | **Done** |
-| **SignalGeneratorAgent** | **TODO — stub** |
+| **DebateRound / DebateVerdict / DebateResult models (Pattern A)** | **Done** |
+| **SignalGeneratorAgent — run + _build_signal + _debate_signal (Pattern A)** | **Done** |
 | **RiskManagerAgent** | **TODO — stub** |
 | **ExecutionAgent (Alpaca)** | **TODO — stub** |
 | **EarningsCalendarAgent** | **TODO — calls Stage1Repository.load_historical_outcomes()** |
 | **ExpiryScanner** | **TODO — calls Stage1Repository.record_outcome()** |
 
-The three stub agents raise `NotImplementedError`. `EarningsCalendarAgent` and `ExpiryScanner`
-are the next planned additions — both wire into `Stage1Repository` which is now complete.
+`SignalGeneratorAgent` is now implemented (Pattern A complete). `RiskManagerAgent` and
+`ExecutionAgent` remain stubs (`NotImplementedError`). `EarningsCalendarAgent` and
+`ExpiryScanner` are the next planned additions — both wire into `Stage1Repository` which is
+now complete.
 
 ---
 
@@ -251,7 +254,14 @@ All PRs must pass `tests.yml` before merging.
    returns `source='observed'` displacing static FMP data. `record_outcome()` is idempotent
    (unique constraint on `stage1_id`). System starts in bootstrapping mode (all FMP).
 
-8. **LangGraph for orchestration** — Typed state graph makes the pipeline inspectable and
+8. **Bull/Bear debate gate (Pattern A)** — `SignalGeneratorAgent._debate_signal()` runs N
+   rounds of LLM bull/bear argument (quick model) then a synthesis verdict (deep model) for
+   signals above `signal_debate_threshold`. Default `signal_debate_rounds=0` keeps the feature
+   off and API cost flat. Verdicts: `CONFIRM` (no-op), `REDUCE` (halve qty), `REJECT` (flip
+   `passed_confidence_gate=False`). Debate results are stored on `TradeSignal.debate_result`
+   for auditability.
+
+9. **LangGraph for orchestration** — Typed state graph makes the pipeline inspectable and
    testable at the graph level.
 
-9. **SQLite default** — Zero-config for development; swap to PostgreSQL via `DATABASE_URL`.
+10. **SQLite default** — Zero-config for development; swap to PostgreSQL via `DATABASE_URL`.

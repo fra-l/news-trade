@@ -12,7 +12,7 @@ compute their stage, write results back, and return the updated state.
 | `NewsIngestorAgent` | `news_ingestor.py` | Done |
 | `MarketDataAgent` | `market_data.py` | Done |
 | `SentimentAnalystAgent` | `sentiment_analyst.py` | Done |
-| `SignalGeneratorAgent` | `signal_generator.py` | **STUB — all methods raise `NotImplementedError`** |
+| `SignalGeneratorAgent` | `signal_generator.py` | **Done — Pattern A implemented** |
 | `RiskManagerAgent` | `risk_manager.py` | **STUB — all methods raise `NotImplementedError`** |
 | `ExecutionAgent` | `execution.py` | **STUB — all methods raise `NotImplementedError`** |
 | `OrchestratorAgent` | `orchestrator.py` | Not used — pipeline built via `graph/pipeline.py` directly |
@@ -77,23 +77,35 @@ Routing logic: `graph/pipeline.py` — `_has_news_events()` and `_has_approved_s
 
 ---
 
-## Implementing the Stub Agents
+## Implemented: `SignalGeneratorAgent`
 
-### `SignalGeneratorAgent`
+Accepts `llm: LLMClientFactory` at construction time (no other service deps yet).
 
-Key dependencies to inject:
-- `llm: LLMClientFactory` — use `.quick` for classification, `.deep` for synthesis
-- `stage1_repo: Stage1Repository` — persist EARN_PRE positions, load open for EARN_POST
-- `confidence_scorer: ConfidenceScorer` — call `apply_gate()` on every signal
-- `estimates_renderer: EstimatesRenderer` — format EstimatesData before LLM call
+### What is implemented (Pattern A)
 
-Core logic per `EventType`:
-- `EARN_PRE` — size from `historical_beat_rate`, persist `OpenStage1Position`, emit PRE signal
-- `EARN_BEAT/MISS` — load `stage1_repo.load_open(ticker)`, confirm/reverse, emit POST signal
-- `EARN_MIXED` — emit EXIT signal, `ConfidenceScorer` gate is 1.01 (always fails — by design)
-- All others — sentiment + market context → `TradeSignal` via `_build_signal()`
+| Method | Purpose |
+|---|---|
+| `run(state)` | Iterates `sentiment_results`, pairs with `market_context`, calls `_build_signal()`, then `_debate_signal()` for gate-passed signals |
+| `_build_signal(sentiment, market_ctx)` | Maps label → direction; computes conviction; applies `min_signal_conviction` threshold; returns `TradeSignal` or `None` |
+| `_compute_position_size(ticker, conviction, volatility)` | Volatility-adjusted heuristic: `max(1, int(conviction / max(vol, 0.01) * 10))` |
+| `_compute_stop_loss(entry, volatility, direction)` | 2× daily vol proxy offset from entry; LONG → below, SHORT → above |
+| `_debate_signal(signal)` | Bull/bear debate gate — skips if `signal_debate_rounds=0` or below `signal_debate_threshold`; applies CONFIRM/REDUCE/REJECT verdict |
 
-See `docs/architecture/event-driven-signal-layer.md §3` for full decision tree.
+Prompt helpers are module-level functions: `_build_bull_prompt`, `_build_bear_prompt`,
+`_build_synthesis_prompt`. The synthesis uses `response_schema=_DebateVerdictSchema`
+(structured output via tool-use).
+
+### What is NOT yet implemented in `SignalGeneratorAgent`
+
+The following EARN_* logic is deferred to a future PR (requires `ConfidenceScorer` and
+`Stage1Repository` injection):
+- `EARN_PRE` — size from `historical_beat_rate`, persist `OpenStage1Position`
+- `EARN_BEAT/MISS` — load open Stage 1 position, confirm/reverse
+- `EARN_MIXED` — emit EXIT signal (ConfidenceScorer gate 1.01 always fails — by design)
+
+See `docs/architecture/event-driven-signal-layer.md §3` for the full decision tree.
+
+## Stub Agents
 
 ### `RiskManagerAgent`
 
