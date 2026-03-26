@@ -58,6 +58,12 @@ instructs the model to reason from pre-announcement signals. `self._llm` always 
 Enforces a daily budget cap (`settings.claude_daily_budget_usd`); returns a neutral
 `SentimentResult` (not an exception) when the cap is hit.
 
+**Sentiment LLM routing Phase 2 (pending):** Once `EarningsCalendarAgent` populates
+`EstimatesData` in `PipelineState`, extend `analyse_batch()` to accept optional estimates
+per ticker and inject `EstimatesRenderer.render()` into the EARN_PRE prompt. This replaces
+headline-only inference with structured analyst context (estimates, dispersion, beat rate).
+See `docs/architecture/sentiment-llm-routing-spec.md §Architecture Decision 2`.
+
 ---
 
 ## Factory Functions (`__init__.py`)

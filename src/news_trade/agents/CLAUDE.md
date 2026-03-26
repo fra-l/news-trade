@@ -15,6 +15,8 @@ compute their stage, write results back, and return the updated state.
 | `SignalGeneratorAgent` | `signal_generator.py` | **Done — Pattern A implemented** |
 | `RiskManagerAgent` | `risk_manager.py` | **STUB — all methods raise `NotImplementedError`** |
 | `ExecutionAgent` | `execution.py` | **Done — Alpaca paper trading integration** |
+| `EarningsCalendarAgent` | `earnings_calendar.py` | **TODO — next to implement** |
+| `ExpiryScanner` | `expiry_scanner.py` | **TODO** |
 | `OrchestratorAgent` | `orchestrator.py` | Not used — pipeline built via `graph/pipeline.py` directly |
 
 ---
@@ -45,6 +47,7 @@ repositories) are injected in the subclass `__init__` — never fetched from glo
 | `SignalGeneratorAgent` | `sentiment_results`, `market_context` | `trade_signals` |
 | `RiskManagerAgent` | `trade_signals`, `portfolio` | `approved_signals`, `rejected_signals` |
 | `ExecutionAgent` | `approved_signals` | `orders` |
+| `EarningsCalendarAgent` | — (runs independently) | `news_events` (EARN_PRE), `estimates` (EstimatesData per ticker) |
 
 Full `PipelineState` schema lives in `graph/state.py`.
 
@@ -106,6 +109,21 @@ The following EARN_* logic is deferred to a future PR (requires `ConfidenceScore
 See `docs/architecture/event-driven-signal-layer.md §3` for the full decision tree.
 
 ## Stub Agents
+
+### `EarningsCalendarAgent` — **next to implement**
+
+Runs on a scheduled cadence (independent of the news pipeline). Responsibilities:
+
+1. Fetch the upcoming earnings calendar for `settings.watchlist` tickers (FMP or similar).
+2. For each ticker with a report date within the configured lookahead window, synthesise a
+   synthetic `NewsEvent` with `event_type=EventType.EARN_PRE`.
+3. Call `Stage1Repository.load_historical_outcomes(ticker)` to get the beat rate for sizing.
+4. Populate `EstimatesData` per ticker in `PipelineState` (`state["estimates"]`) so that
+   **Sentiment LLM routing Phase 2** can inject `EstimatesRenderer.render()` into the EARN_PRE
+   Claude prompt.
+5. Publish EARN_PRE events to the `EventBus` so the main pipeline picks them up.
+
+Constructor receives: `Stage1Repository`, `EventBus`, and a calendar data client.
 
 ### `RiskManagerAgent`
 

@@ -206,7 +206,8 @@ unless absolutely necessary with a comment explaining why.
 | **ClaudeSentimentProvider — per-event LLM tier routing + EARN_PRE prompt** | **Done** |
 | **RiskManagerAgent** | **TODO — stub** |
 | **ExecutionAgent (Alpaca)** | **Done — paper trading, asyncio.to_thread, OrderRow persistence** |
-| **EarningsCalendarAgent** | **TODO — calls Stage1Repository.load_historical_outcomes()** |
+| **EarningsCalendarAgent** | **TODO — next: synthesise EARN_PRE events, populate EstimatesData in state** |
+| **Sentiment LLM routing Phase 2** | **TODO — blocked on EarningsCalendarAgent (EstimatesData in state)** |
 | **ExpiryScanner** | **TODO — calls Stage1Repository.record_outcome()** |
 
 `SignalGeneratorAgent` is now implemented (Pattern A complete). `ClaudeSentimentProvider`
@@ -215,8 +216,17 @@ EARN_PRE/BEAT/MISS — and uses a specialised EARN_PRE system prompt (Phase 1 of
 sentiment LLM routing spec). `ExecutionAgent` is now implemented — wraps the synchronous
 Alpaca `TradingClient` via `asyncio.to_thread`, persists orders to `OrderRow`, and handles
 `CLOSE` signal direction via portfolio position inspection. `RiskManagerAgent` remains a
-stub. `EarningsCalendarAgent` and `ExpiryScanner` are the next planned additions — both
-wire into `Stage1Repository` which is now complete.
+stub.
+
+**Next implementation sequence:**
+1. `EarningsCalendarAgent` — synthesises EARN_PRE events from a calendar feed, populates
+   `EstimatesData` in `PipelineState`, calls `Stage1Repository.load_historical_outcomes()`
+   for beat-rate sizing.
+2. **Sentiment LLM routing Phase 2** — inject `EstimatesRenderer.render()` into the EARN_PRE
+   prompt once `EarningsCalendarAgent` makes `EstimatesData` available in state. Specified in
+   `docs/architecture/sentiment-llm-routing-spec.md §Architecture Decision 2`.
+3. `RiskManagerAgent` — five-layer fail-fast risk checks; plan documented in session context.
+4. `ExpiryScanner` — closes expired Stage 1 positions via `Stage1Repository.record_outcome()`.
 
 ---
 
