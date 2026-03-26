@@ -17,6 +17,7 @@ No real network calls, no real API keys, no Redis, no file-system databases.
 | `test_estimates_renderer.py` | `EstimatesRenderer` | None (stateless) |
 | `test_confidence_scorer.py` | `ConfidenceScorer` | None (pure Python) |
 | `test_stage1_repository.py` | `Stage1Repository` | In-memory SQLite |
+| `test_earnings_calendar.py` | `EarningsCalendarAgent`, `EarningsCalendarEntry`, `_synthesise_event` | AsyncMock providers + in-memory SQLite |
 | `test_risk_rules.py` | Risk rules | Placeholder — all skipped |
 | `test_execution.py` | `ExecutionAgent` — order side mapping, Alpaca submission, `OrderRow` persistence | MagicMock Alpaca + in-memory SQLite |
 
