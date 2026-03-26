@@ -11,7 +11,7 @@ No real network calls, no real API keys, no Redis, no file-system databases.
 |---|---|---|
 | `test_models.py` | All Pydantic models | None |
 | `test_pipeline.py` | LangGraph graph topology | Mock agents |
-| `test_providers.py` | Protocol compliance + factory functions | Mock HTTP / AsyncMock |
+| `test_providers.py` | Protocol compliance + factory functions + `ClaudeSentimentProvider` tier routing | Mock HTTP / AsyncMock |
 | `test_news_ingestor.py` | `NewsIngestorAgent` | AsyncMock provider + in-memory SQLite |
 | `test_llm_client.py` | `LLMClient` protocol, factory, `AnthropicLLMClient` | `unittest.mock.patch` |
 | `test_estimates_renderer.py` | `EstimatesRenderer` | None (stateless) |

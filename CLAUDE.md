@@ -203,15 +203,18 @@ unless absolutely necessary with a comment explaining why.
 | **ORM tables: OpenStage1PositionRow, EarningsOutcomeRow (Pattern D)** | **Done** |
 | **DebateRound / DebateVerdict / DebateResult models (Pattern A)** | **Done** |
 | **SignalGeneratorAgent — run + _build_signal + _debate_signal (Pattern A)** | **Done** |
+| **ClaudeSentimentProvider — per-event LLM tier routing + EARN_PRE prompt** | **Done** |
 | **RiskManagerAgent** | **TODO — stub** |
 | **ExecutionAgent (Alpaca)** | **TODO — stub** |
 | **EarningsCalendarAgent** | **TODO — calls Stage1Repository.load_historical_outcomes()** |
 | **ExpiryScanner** | **TODO — calls Stage1Repository.record_outcome()** |
 
-`SignalGeneratorAgent` is now implemented (Pattern A complete). `RiskManagerAgent` and
-`ExecutionAgent` remain stubs (`NotImplementedError`). `EarningsCalendarAgent` and
-`ExpiryScanner` are the next planned additions — both wire into `Stage1Repository` which is
-now complete.
+`SignalGeneratorAgent` is now implemented (Pattern A complete). `ClaudeSentimentProvider`
+now routes per event type — `quick` (Haiku) for non-earnings events, `deep` (Sonnet) for
+EARN_PRE/BEAT/MISS — and uses a specialised EARN_PRE system prompt (Phase 1 of the
+sentiment LLM routing spec). `RiskManagerAgent` and `ExecutionAgent` remain stubs
+(`NotImplementedError`). `EarningsCalendarAgent` and `ExpiryScanner` are the next planned
+additions — both wire into `Stage1Repository` which is now complete.
 
 ---
 
@@ -242,8 +245,10 @@ All PRs must pass `tests.yml` before merging.
    relevant financial keywords, cutting API spend.
 
 5. **Two-tier LLM routing (Pattern B)** — `LLMClientFactory.quick` (Haiku) for cheap tasks
-   (classification, extraction); `.deep` (Sonnet) for expensive tasks (confidence scoring,
-   synthesis). Adding OpenAI/Gemini requires one new class — no agent changes.
+   (classification, extraction, non-earnings sentiment); `.deep` (Sonnet) for expensive tasks
+   (confidence scoring, synthesis, EARN_PRE/BEAT/MISS sentiment). `ClaudeSentimentProvider`
+   holds the full factory and selects the tier per event inside `_select_client()` — the
+   agent layer is unchanged. Adding OpenAI/Gemini requires one new class — no agent changes.
 
 6. **Deterministic confidence scoring (Pattern C)** — `EstimatesRenderer` pre-computes
    surprise deltas; `ConfidenceScorer` applies a per-`EventType` weight matrix. No LLM
