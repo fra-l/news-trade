@@ -159,6 +159,49 @@ reducing Anthropic API spend for high-throughput tasks.
 
 ---
 
+---
+
+## ~~Pattern A: Bull/Bear Debate in SignalGeneratorAgent~~ ✅ Done
+
+**Priority:** P1 — High
+**Depends on:** Pattern B (LLMClientFactory)
+**Labels:** `architecture`, `feature`, `cost-control`
+
+Implemented in commit `ea99350` on branch `claude/review-trading-spec-kRPmw`.
+
+Implements the full `SignalGeneratorAgent` (replacing the stub) and adds an optional
+bull/bear LLM debate gate for high-confidence signals. Disabled by default
+(`signal_debate_rounds=0`) to keep API costs flat during development.
+
+### Deliverables
+
+| # | Task | Files |
+|---|------|-------|
+| 1 | `DebateRound`, `DebateVerdict`, `DebateResult` models | `models/signals.py` |
+| 2 | `debate_result: DebateResult | None` field on `TradeSignal` | `models/signals.py` |
+| 3 | `signal_debate_rounds`, `signal_debate_model`, `signal_debate_threshold` settings | `config.py` |
+| 4 | `SignalGeneratorAgent.run()` — pairs sentiment with market context, emits `TradeSignal` | `agents/signal_generator.py` |
+| 5 | `_build_signal()` — label→direction mapping, conviction threshold, qty/stop-loss | `agents/signal_generator.py` |
+| 6 | `_compute_position_size()`, `_compute_stop_loss()` | `agents/signal_generator.py` |
+| 7 | `_debate_signal()` — bull/bear rounds (quick model) + synthesis verdict (deep model) | `agents/signal_generator.py` |
+| 8 | Prompt helpers: `_build_bull_prompt`, `_build_bear_prompt`, `_build_synthesis_prompt` | `agents/signal_generator.py` |
+| 9 | Wire `LLMClientFactory` into `SignalGeneratorAgent` in pipeline | `graph/pipeline.py` |
+| 10 | 9 model tests (`TestDebateModels`) | `tests/test_models.py` |
+| 11 | 22 agent tests across 4 classes | `tests/test_signal_generator.py` |
+
+### Design decisions
+
+- **`signal_debate_rounds=0` default** — feature off by default; no API spend change until
+  explicitly enabled in `.env`
+- **Two threshold guards** — debate skipped if disabled OR if `confidence_score` is below
+  `signal_debate_threshold`; the second guard prevents cheap debate calls on weak signals
+- **Verdict applied via `model_copy()`** — `TradeSignal` is mutable; REDUCE halves qty,
+  REJECT flips `passed_confidence_gate=False` and sets `rejection_reason`
+- **EARN_PRE / EARN_BEAT / EARN_MISS logic deferred** — requires `ConfidenceScorer` and
+  `Stage1Repository` injection; deferred to a follow-up PR to keep this PR focused
+
+---
+
 ## Dependency graph
 
 ```
@@ -168,6 +211,10 @@ reducing Anthropic API spend for high-throughput tasks.
 #7 docker-compose ✅    (independent)
 #8 py.typed ✅          (independent)
 Phase 0 Provider Layer ✅ (depends on #3, #5)
+Pattern B ✅ ──────────► Pattern A ✅
 ```
 
-Pattern B (LLM client abstraction) resolved. Remaining: Pattern A (Bull/Bear Debate), Pattern C (Fundamentals Prompt Structure), Pattern D (Reflection Loop), and the three stub agents.
+Patterns A, B, C, D all resolved. Remaining stub agents: `RiskManagerAgent`, `ExecutionAgent`.
+Next planned additions: `EarningsCalendarAgent` and `ExpiryScanner` (both wire into
+`Stage1Repository`). `SignalGeneratorAgent` EARN_PRE/BEAT/MISS logic (requires wiring
+`ConfidenceScorer` + `Stage1Repository`).
