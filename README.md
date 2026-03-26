@@ -30,9 +30,10 @@ SentimentAnalystAgent ←── SentimentProvider (claude | keyword)
 | **NewsIngestorAgent** | `agents/news_ingestor.py` | Fetches news via injected provider, filters by watchlist, deduplicates |
 | **MarketDataAgent** | `agents/market_data.py` | Fetches OHLCV bars and computes volatility via injected provider |
 | **SentimentAnalystAgent** | `agents/sentiment_analyst.py` | Classifies news sentiment via injected provider (Claude or keyword fallback) |
-| **SignalGeneratorAgent** | `agents/signal_generator.py` | Combines sentiment + market context into trade signals |
-| **RiskManagerAgent** | `agents/risk_manager.py` | Validates signals against position limits, drawdown, and conflicts |
-| **ExecutionAgent** | `agents/execution.py` | Places and manages orders on Alpaca paper trading |
+| **SignalGeneratorAgent** | `agents/signal_generator.py` | Combines sentiment + market context into trade signals *(stub)* |
+| **RiskManagerAgent** | `agents/risk_manager.py` | Validates signals against position limits, drawdown, and conflicts *(stub)* |
+| **ExecutionAgent** | `agents/execution.py` | Places and manages orders on Alpaca paper trading *(stub)* |
+| **EarningsCalendarAgent** | `agents/earnings_calendar.py` | Daily cron (07:00 ET): scans earnings calendar, emits `EARN_PRE` events |
 | **OrchestratorAgent** | `agents/orchestrator.py` | Builds and runs the LangGraph pipeline |
 
 ## Providers
@@ -59,6 +60,13 @@ SentimentAnalystAgent ←── SentimentProvider (claude | keyword)
 | `ClaudeSentimentProvider` | Paid | Daily budget cap; falls back to neutral when exhausted |
 | `KeywordSentimentProvider` | Free | Heuristic keyword weights, confidence fixed at 0.4 |
 
+### Earnings Calendar
+
+| Provider | Type | Notes |
+|---|---|---|
+| `FMPCalendarProvider` | Free (250 req/day) | Primary; requires `FMP_API_KEY`; provides `eps_estimate` and `timing` |
+| `YFinanceCalendarProvider` | Free | Fallback; no API key; timing always `UNKNOWN` |
+
 ## Data Models
 
 | Model | File | Description |
@@ -71,6 +79,7 @@ SentimentAnalystAgent ←── SentimentProvider (claude | keyword)
 | `EstimatesData` | `models/surprise.py` | Pre-announcement consensus estimates (EPS, revenue, analyst range) |
 | `MetricSurprise` | `models/surprise.py` | Post-announcement single-metric surprise with sigma and direction |
 | `EarningsSurprise` | `models/surprise.py` | Composite post-announcement surprise with signal strength tier |
+| `EarningsCalendarEntry` | `models/calendar.py` | Upcoming earnings entry with `is_actionable` + `days_until_report` |
 | `Order` | `models/orders.py` | Alpaca order with lifecycle tracking |
 | `PortfolioState` | `models/portfolio.py` | Account and position snapshot for risk checks |
 
@@ -136,6 +145,12 @@ SENTIMENT_DRY_RUN=false        # set true to skip all API calls (mock scores)
 NEWS_KEYWORD_PREFILTER=true    # strip non-watchlist articles before Claude
 ```
 
+### Earnings calendar
+
+```env
+FMP_API_KEY=...   # optional; falls back to yfinance when absent
+```
+
 ### Required API keys
 
 ```env
@@ -169,23 +184,25 @@ src/news_trade/
 ├── main.py                # Entrypoint — pipeline loop
 ├── agents/
 │   ├── base.py            # Abstract BaseAgent
-│   ├── news_ingestor.py   # NewsIngestorAgent (DI)
-│   ├── market_data.py     # MarketDataAgent (DI)
-│   ├── sentiment_analyst.py # SentimentAnalystAgent (DI)
-│   ├── signal_generator.py  # SignalGeneratorAgent
-│   ├── risk_manager.py    # RiskManagerAgent
-│   ├── execution.py       # ExecutionAgent
-│   └── orchestrator.py    # OrchestratorAgent
+│   ├── news_ingestor.py      # NewsIngestorAgent (DI)
+│   ├── market_data.py        # MarketDataAgent (DI)
+│   ├── sentiment_analyst.py  # SentimentAnalystAgent (DI)
+│   ├── signal_generator.py   # SignalGeneratorAgent (stub)
+│   ├── risk_manager.py       # RiskManagerAgent (stub)
+│   ├── execution.py          # ExecutionAgent (stub)
+│   ├── earnings_calendar.py  # EarningsCalendarAgent (cron, outside pipeline)
+│   └── orchestrator.py       # OrchestratorAgent
 ├── models/
 │   ├── events.py          # NewsEvent, EventType (coarse + 20 fine-grained)
 │   ├── market.py          # MarketSnapshot, OHLCVBar
 │   ├── sentiment.py       # SentimentResult
 │   ├── signals.py         # TradeSignal (+ confidence fields)
 │   ├── surprise.py        # EstimatesData, MetricSurprise, EarningsSurprise
+│   ├── calendar.py        # EarningsCalendarEntry, ReportTiming
 │   ├── orders.py          # Order, OrderStatus
 │   └── portfolio.py       # PortfolioState, Position
 ├── providers/
-│   ├── base.py            # Protocol definitions
+│   ├── base.py            # Protocol definitions (incl. CalendarProvider)
 │   ├── news/
 │   │   ├── rss.py         # Yahoo Finance + MarketWatch RSS (free)
 │   │   └── benzinga.py    # Benzinga API (premium)
@@ -193,9 +210,12 @@ src/news_trade/
 │   │   ├── yfinance.py    # yfinance library (free)
 │   │   ├── polygon_free.py # Polygon.io free tier
 │   │   └── polygon_paid.py # Polygon.io Starter+ (premium)
-│   └── sentiment/
-│       ├── claude.py      # Claude API with daily budget cap
-│       └── keyword.py     # Keyword heuristic fallback (free)
+│   ├── sentiment/
+│   │   ├── claude.py      # Claude API with daily budget cap
+│   │   └── keyword.py     # Keyword heuristic fallback (free)
+│   └── calendar/
+│       ├── fmp.py         # FMP earning_calendar endpoint (primary)
+│       └── yfinance_provider.py  # yfinance fallback (no API key)
 ├── services/
 │   ├── database.py           # SQLAlchemy engine/session
 │   ├── estimates_renderer.py # EstimatesRenderer — FMP estimates → structured narrative

@@ -25,6 +25,13 @@ class SentimentProvider(Protocol):
     def name(self) -> str: ...
     async def analyse(self, event: NewsEvent) -> SentimentResult: ...
     async def analyse_batch(self, events: list[NewsEvent]) -> list[SentimentResult]: ...
+
+class CalendarProvider(Protocol):
+    @property
+    def name(self) -> str: ...
+    async def get_upcoming_earnings(
+        self, tickers: list[str], from_date: date, to_date: date
+    ) -> list[EarningsCalendarEntry]: ...
 ```
 
 All provider methods are `async`. Test mocks implement only the methods the test needs
@@ -43,6 +50,8 @@ All provider methods are `async`. Test mocks implement only the methods the test
 | Market | `market/polygon_paid.py` | `PolygonPaidMarketProvider` | Starter+ | `POLYGON_API_KEY` |
 | Sentiment | `sentiment/claude.py` | `ClaudeSentimentProvider` | Paid | `ANTHROPIC_API_KEY` |
 | Sentiment | `sentiment/keyword.py` | `KeywordSentimentProvider` | Free | — |
+| Calendar | `calendar/fmp.py` | `FMPCalendarProvider` | Free (250 req/day) | `FMP_API_KEY` |
+| Calendar | `calendar/yfinance_provider.py` | `YFinanceCalendarProvider` | Free | — |
 
 `ClaudeSentimentProvider` injects a full `LLMClientFactory` and selects the LLM tier per
 event inside `_select_client()`:
@@ -72,7 +81,12 @@ See `docs/architecture/sentiment-llm-routing-spec.md §Architecture Decision 2`.
 get_news_provider(settings)         # → RSSNewsProvider | BenzingaNewsProvider
 get_market_data_provider(settings)  # → YFinance | PolygonFree | PolygonPaid
 get_sentiment_provider(settings)    # → ClaudeSentimentProvider | KeywordSentimentProvider
+get_calendar_provider(settings)     # → FMPCalendarProvider (if FMP_API_KEY) | YFinanceCalendarProvider
 ```
+
+`get_calendar_provider` returns `FMPCalendarProvider` when `settings.fmp_api_key` is set
+(preferred — provides `eps_estimate` and `timing`). Falls back to `YFinanceCalendarProvider`
+automatically when no key is present.
 
 Selection is driven by `settings.news_provider`, `settings.market_data_provider`,
 and `settings.sentiment_provider` (enum fields in `config.py`).

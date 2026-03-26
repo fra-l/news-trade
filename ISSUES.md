@@ -202,6 +202,40 @@ bull/bear LLM debate gate for high-confidence signals. Disabled by default
 
 ---
 
+## ~~Issues #10, #11, #12: EarningsCalendarAgent — model, providers, agent~~ ✅ Done
+
+**Priority:** P1 — High
+**Depends on:** Stage1Repository (Pattern D — done), NewsEvent, EventType.EARN_PRE
+**Labels:** `agent`, `feature`, `calendar`
+
+Implements the earnings calendar integration specified in
+`docs/architecture/event-driven-signal-layer.md §6`.
+
+### Deliverables
+
+| # | Task | Files |
+|---|------|-------|
+| 10 | `EarningsCalendarEntry` model + `ReportTiming` StrEnum | `models/calendar.py` |
+| 11 | `FMPCalendarProvider` + `YFinanceCalendarProvider` | `providers/calendar/fmp.py`, `providers/calendar/yfinance_provider.py` |
+| 12 | `EarningsCalendarAgent` with dedup guard + primary/fallback chain | `agents/earnings_calendar.py` |
+| — | `CalendarProvider` Protocol | `providers/base.py` |
+| — | `get_calendar_provider()` factory | `providers/__init__.py` |
+| — | `fmp_api_key` setting | `config.py` |
+| — | 31 unit tests | `tests/test_earnings_calendar.py` |
+
+### Design decisions
+
+- **Primary/fallback chain** — `FMPCalendarProvider` is preferred (has `eps_estimate` and `timing`).
+  If it returns empty or raises, the agent falls back to `YFinanceCalendarProvider` transparently.
+- **Lazy imports** — `aiohttp` and `yfinance` are imported inside methods so missing stubs do
+  not break the import graph when those libraries are absent.
+- **Dedup via NewsEventRow** — the same SQLite table used by `NewsIngestorAgent`; identical
+  `event_id` format ensures EARN_PRE events fired by calendar and by real news don't duplicate.
+- **`is_actionable` window 2–5 days** — below 2: IV already elevated; above 5: signal decays.
+- **Cron wiring in `main.py` (issue #13) is out of scope** — covered as a separate task.
+
+---
+
 ## Dependency graph
 
 ```
@@ -212,9 +246,9 @@ bull/bear LLM debate gate for high-confidence signals. Disabled by default
 #8 py.typed ✅          (independent)
 Phase 0 Provider Layer ✅ (depends on #3, #5)
 Pattern B ✅ ──────────► Pattern A ✅
+#10 EarningsCalendarEntry ✅ ──► #11 Calendar providers ✅ ──► #12 EarningsCalendarAgent ✅
 ```
 
-Patterns A, B, C, D all resolved. Remaining stub agents: `RiskManagerAgent`, `ExecutionAgent`.
-Next planned additions: `EarningsCalendarAgent` and `ExpiryScanner` (both wire into
-`Stage1Repository`). `SignalGeneratorAgent` EARN_PRE/BEAT/MISS logic (requires wiring
-`ConfidenceScorer` + `Stage1Repository`).
+Patterns A, B, C, D all resolved. Issues #10–#12 (EarningsCalendarAgent) resolved.
+`ExecutionAgent` done. Remaining stub agents: `RiskManagerAgent`.
+Next planned additions: `ExpiryScanner` (#22) and cron wiring in `main.py` (#13).

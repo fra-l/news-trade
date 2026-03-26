@@ -1,0 +1,390 @@
+"""Tests for EarningsCalendarAgent, EarningsCalendarEntry, and calendar providers.
+
+All tests use in-memory SQLite and AsyncMock — no real network calls.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from unittest.mock import AsyncMock
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from news_trade.agents.earnings_calendar import (
+    EarningsCalendarAgent,
+    _make_event_id,
+    _synthesise_event,
+)
+from news_trade.config import Settings
+from news_trade.models.calendar import EarningsCalendarEntry, ReportTiming
+from news_trade.models.events import EventType
+from news_trade.services.tables import Base, NewsEventRow
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_settings(**kwargs: object) -> Settings:
+    defaults: dict[str, object] = dict(
+        anthropic_api_key="test",
+        watchlist=["AAPL", "MSFT"],
+    )
+    return Settings(**(defaults | kwargs))  # type: ignore[arg-type]
+
+
+def _make_entry(**kwargs: object) -> EarningsCalendarEntry:
+    defaults: dict[str, object] = dict(
+        ticker="AAPL",
+        report_date=date.today() + timedelta(days=3),
+        fiscal_quarter="Q2 2026",
+        fiscal_year=2026,
+        timing=ReportTiming.PRE_MARKET,
+        eps_estimate=1.55,
+    )
+    return EarningsCalendarEntry(**(defaults | kwargs))  # type: ignore[arg-type]
+
+
+def _make_engine():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    return engine
+
+
+def _make_agent(
+    primary: object | None = None,
+    fallback: object | None = None,
+    engine=None,
+    settings: Settings | None = None,
+) -> EarningsCalendarAgent:
+    if primary is None:
+        primary = AsyncMock()
+        primary.name = "mock_primary"
+        primary.get_upcoming_earnings = AsyncMock(return_value=[])
+    if fallback is None:
+        fallback = AsyncMock()
+        fallback.name = "mock_fallback"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
+    if engine is None:
+        engine = _make_engine()
+    if settings is None:
+        settings = _make_settings()
+    event_bus = AsyncMock()
+    event_bus.publish = AsyncMock()
+    agent = EarningsCalendarAgent(settings, event_bus, primary, fallback, engine)
+    agent._event_bus = event_bus  # expose for assertions
+    return agent
+
+
+# ---------------------------------------------------------------------------
+# TestEarningsCalendarEntry
+# ---------------------------------------------------------------------------
+
+
+class TestEarningsCalendarEntry:
+    def test_is_actionable_at_2_days(self) -> None:
+        entry = _make_entry(report_date=date.today() + timedelta(days=2))
+        assert entry.is_actionable is True
+
+    def test_is_actionable_at_5_days(self) -> None:
+        entry = _make_entry(report_date=date.today() + timedelta(days=5))
+        assert entry.is_actionable is True
+
+    def test_not_actionable_at_1_day(self) -> None:
+        entry = _make_entry(report_date=date.today() + timedelta(days=1))
+        assert entry.is_actionable is False
+
+    def test_not_actionable_at_6_days(self) -> None:
+        entry = _make_entry(report_date=date.today() + timedelta(days=6))
+        assert entry.is_actionable is False
+
+    def test_not_actionable_in_past(self) -> None:
+        entry = _make_entry(report_date=date.today() - timedelta(days=1))
+        assert entry.is_actionable is False
+
+    def test_days_until_report(self) -> None:
+        entry = _make_entry(report_date=date.today() + timedelta(days=4))
+        assert entry.days_until_report == 4
+
+    def test_days_until_report_negative_when_past(self) -> None:
+        entry = _make_entry(report_date=date.today() - timedelta(days=2))
+        assert entry.days_until_report == -2
+
+    def test_serialization_round_trip(self) -> None:
+        entry = _make_entry()
+        restored = EarningsCalendarEntry.model_validate(entry.model_dump())
+        assert restored.ticker == entry.ticker
+        assert restored.report_date == entry.report_date
+
+    def test_optional_eps_estimate(self) -> None:
+        entry = _make_entry(eps_estimate=None)
+        assert entry.eps_estimate is None
+
+    def test_default_timing_unknown(self) -> None:
+        entry = EarningsCalendarEntry(
+            ticker="AAPL",
+            report_date=date.today() + timedelta(days=3),
+            fiscal_quarter="Q2 2026",
+            fiscal_year=2026,
+        )
+        assert entry.timing == ReportTiming.UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# TestSynthesiseEvent
+# ---------------------------------------------------------------------------
+
+
+class TestSynthesiseEvent:
+    def test_event_type_is_earn_pre(self) -> None:
+        entry = _make_entry()
+        event = _synthesise_event(entry)
+        assert event.event_type == EventType.EARN_PRE
+
+    def test_event_id_format(self) -> None:
+        entry = _make_entry(ticker="AAPL", report_date=date(2026, 4, 25))
+        event = _synthesise_event(entry)
+        assert event.event_id == "calendar_earn_pre_AAPL_2026-04-25"
+
+    def test_source_is_earnings_calendar(self) -> None:
+        entry = _make_entry()
+        event = _synthesise_event(entry)
+        assert event.source == "earnings_calendar"
+
+    def test_tickers_contains_ticker(self) -> None:
+        entry = _make_entry(ticker="MSFT")
+        event = _synthesise_event(entry)
+        assert "MSFT" in event.tickers
+
+    def test_headline_contains_quarter_and_date(self) -> None:
+        entry = _make_entry(
+            ticker="AAPL", fiscal_quarter="Q2 2026", report_date=date(2026, 4, 25)
+        )
+        event = _synthesise_event(entry)
+        assert "Q2 2026" in event.headline
+        assert "2026-04-25" in event.headline
+
+    def test_summary_contains_eps_estimate(self) -> None:
+        entry = _make_entry(eps_estimate=1.55)
+        event = _synthesise_event(entry)
+        assert "1.55" in event.summary
+
+
+# ---------------------------------------------------------------------------
+# TestEarningsCalendarAgentHappyPath
+# ---------------------------------------------------------------------------
+
+
+class TestEarningsCalendarAgentHappyPath:
+    def setup_method(self) -> None:
+        self.engine = _make_engine()
+        self.settings = _make_settings()
+        _3d = date.today() + timedelta(days=3)
+        _4d = date.today() + timedelta(days=4)
+        self.entry_aapl = _make_entry(ticker="AAPL", report_date=_3d)
+        self.entry_msft = _make_entry(ticker="MSFT", report_date=_4d)
+
+        self.primary = AsyncMock()
+        self.primary.name = "fmp_calendar"
+        self.primary.get_upcoming_earnings = AsyncMock(
+            return_value=[self.entry_aapl, self.entry_msft]
+        )
+        self.fallback = AsyncMock()
+        self.fallback.name = "yfinance_calendar"
+        self.fallback.get_upcoming_earnings = AsyncMock(return_value=[])
+        self.event_bus = AsyncMock()
+        self.event_bus.publish = AsyncMock()
+
+        self.agent = EarningsCalendarAgent(
+            self.settings, self.event_bus, self.primary, self.fallback, self.engine
+        )
+
+    async def test_returns_two_events(self) -> None:
+        result = await self.agent.run({})
+        assert len(result["news_events"]) == 2
+
+    async def test_events_are_earn_pre(self) -> None:
+        result = await self.agent.run({})
+        for event in result["news_events"]:
+            assert event.event_type == EventType.EARN_PRE
+
+    async def test_events_persisted_to_sqlite(self) -> None:
+        await self.agent.run({})
+        with Session(self.engine) as s:
+            rows = s.query(NewsEventRow).all()
+        assert len(rows) == 2
+
+    async def test_events_published_to_bus(self) -> None:
+        await self.agent.run({})
+        assert self.event_bus.publish.call_count == 2
+
+    async def test_fallback_not_called_when_primary_succeeds(self) -> None:
+        await self.agent.run({})
+        self.fallback.get_upcoming_earnings.assert_not_called()
+
+    async def test_no_errors_returned(self) -> None:
+        result = await self.agent.run({})
+        assert result["errors"] == []
+
+    async def test_errors_from_state_preserved(self) -> None:
+        result = await self.agent.run({"errors": ["prior error"]})
+        assert "prior error" in result["errors"]
+
+
+# ---------------------------------------------------------------------------
+# TestEarningsCalendarAgentDedup
+# ---------------------------------------------------------------------------
+
+
+class TestEarningsCalendarAgentDedup:
+    def setup_method(self) -> None:
+        self.engine = _make_engine()
+        self.settings = _make_settings()
+        _3d = date.today() + timedelta(days=3)
+        self.entry = _make_entry(ticker="AAPL", report_date=_3d)
+
+        # Pre-seed the database with the same event_id
+        event_id = _make_event_id(self.entry)
+        with Session(self.engine) as s:
+            s.add(NewsEventRow(
+                event_id=event_id,
+                headline="pre-existing",
+                summary="",
+                source="earnings_calendar",
+                url="",
+                event_type=EventType.EARN_PRE,
+                published_at=datetime.utcnow(),
+            ))
+            s.commit()
+
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(return_value=[self.entry])
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
+        self.event_bus = AsyncMock()
+        self.event_bus.publish = AsyncMock()
+        self.agent = EarningsCalendarAgent(
+            self.settings, self.event_bus, primary, fallback, self.engine
+        )
+
+    async def test_duplicate_skipped(self) -> None:
+        result = await self.agent.run({})
+        assert result["news_events"] == []
+
+    async def test_nothing_published_for_duplicate(self) -> None:
+        await self.agent.run({})
+        self.event_bus.publish.assert_not_called()
+
+    async def test_sqlite_row_count_unchanged(self) -> None:
+        await self.agent.run({})
+        with Session(self.engine) as s:
+            count = s.query(NewsEventRow).count()
+        assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# TestEarningsCalendarAgentFallback
+# ---------------------------------------------------------------------------
+
+
+class TestEarningsCalendarAgentFallback:
+    def setup_method(self) -> None:
+        self.engine = _make_engine()
+        self.settings = _make_settings()
+        _2d = date.today() + timedelta(days=2)
+        self.fallback_entry = _make_entry(ticker="MSFT", report_date=_2d)
+        self.event_bus = AsyncMock()
+        self.event_bus.publish = AsyncMock()
+
+    async def test_fallback_called_when_primary_empty(self) -> None:
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(return_value=[])
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[self.fallback_entry])
+
+        agent = EarningsCalendarAgent(
+            self.settings, self.event_bus, primary, fallback, self.engine
+        )
+        result = await agent.run({})
+        assert len(result["news_events"]) == 1
+        fallback.get_upcoming_earnings.assert_called_once()
+
+    async def test_fallback_called_when_primary_raises(self) -> None:
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(side_effect=RuntimeError("FMP down"))
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[self.fallback_entry])
+
+        agent = EarningsCalendarAgent(
+            self.settings, self.event_bus, primary, fallback, self.engine
+        )
+        result = await agent.run({})
+        assert len(result["news_events"]) == 1
+        fallback.get_upcoming_earnings.assert_called_once()
+
+    async def test_both_providers_fail_returns_empty(self) -> None:
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(side_effect=RuntimeError("FMP down"))
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(
+            side_effect=RuntimeError("yfinance down")
+        )
+
+        agent = EarningsCalendarAgent(
+            self.settings, self.event_bus, primary, fallback, self.engine
+        )
+        result = await agent.run({})
+        assert result["news_events"] == []
+
+
+# ---------------------------------------------------------------------------
+# TestEarningsCalendarAgentWindowFiltering
+# ---------------------------------------------------------------------------
+
+
+class TestEarningsCalendarAgentWindowFiltering:
+    def setup_method(self) -> None:
+        self.engine = _make_engine()
+        self.settings = _make_settings()
+        self.event_bus = AsyncMock()
+        self.event_bus.publish = AsyncMock()
+
+    async def test_entry_at_1_day_not_emitted(self) -> None:
+        entry = _make_entry(report_date=date.today() + timedelta(days=1))
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(return_value=[entry])
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
+
+        agent = EarningsCalendarAgent(
+            self.settings, self.event_bus, primary, fallback, self.engine
+        )
+        result = await agent.run({})
+        assert result["news_events"] == []
+        self.event_bus.publish.assert_not_called()
+
+    async def test_entry_at_6_days_not_emitted(self) -> None:
+        entry = _make_entry(report_date=date.today() + timedelta(days=6))
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(return_value=[entry])
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
+
+        agent = EarningsCalendarAgent(
+            self.settings, self.event_bus, primary, fallback, self.engine
+        )
+        result = await agent.run({})
+        assert result["news_events"] == []

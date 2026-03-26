@@ -42,10 +42,10 @@ conventions, patterns, and status information that would otherwise clutter this 
 
 | Directory | Read `CLAUDE.md` there when you are… |
 |---|---|
-| `src/news_trade/agents/` | Implementing or extending any agent; understanding which agents are stubs vs done; wiring `Stage1Repository`, `ConfidenceScorer`, or `LLMClientFactory` into `SignalGeneratorAgent` or `RiskManagerAgent` |
+| `src/news_trade/agents/` | Implementing or extending any agent; understanding which agents are stubs vs done; wiring `Stage1Repository`, `ConfidenceScorer`, or `LLMClientFactory` into `SignalGeneratorAgent` or `RiskManagerAgent`; `EarningsCalendarAgent` pattern for cron-driven agents |
 | `src/news_trade/models/` | Adding or modifying Pydantic models; understanding frozen vs mutable, computed fields, or how `EventType` tiers map to signal logic |
 | `src/news_trade/services/` | Using `LLMClientFactory`, `ConfidenceScorer`, `EstimatesRenderer`, or `Stage1Repository`; adding ORM tables; understanding the two-tier LLM routing or Pattern D reflection loop |
-| `src/news_trade/providers/` | Adding a new data provider (news, market, or sentiment); understanding the Protocol abstraction and factory wiring |
+| `src/news_trade/providers/` | Adding a new data provider (news, market, sentiment, or calendar); understanding the Protocol abstraction and factory wiring |
 | `tests/` | Writing tests; understanding the `_make(**kwargs)` helper pattern, in-memory SQLite setup, or `AsyncMock` usage |
 
 ---
@@ -56,17 +56,18 @@ conventions, patterns, and status information that would otherwise clutter this 
 src/news_trade/
 ├── config.py              # Pydantic Settings — all env vars (see Configuration below)
 ├── main.py                # Entrypoint: builds pipeline, runs polling loop
-├── agents/                # LangGraph agent nodes — 3 done, 3 stubs → see agents/CLAUDE.md
+├── agents/                # LangGraph agent nodes + cron agents — see agents/CLAUDE.md
 ├── graph/
 │   ├── state.py           # PipelineState TypedDict
 │   └── pipeline.py        # StateGraph builder + conditional routing
-├── models/                # Pydantic data models — 9 files → see models/CLAUDE.md
+├── models/                # Pydantic data models — 10 files → see models/CLAUDE.md
 ├── providers/             # Protocol-based data providers → see providers/CLAUDE.md
 │   ├── base.py            # NewsProvider, MarketDataProvider, SentimentProvider Protocols
 │   ├── __init__.py        # Factory functions: get_*_provider(settings)
 │   ├── news/              # RSSNewsProvider, BenzingaNewsProvider
 │   ├── market/            # YFinance, PolygonFree, PolygonPaid
-│   └── sentiment/         # ClaudeSentimentProvider (budget-capped), KeywordSentimentProvider
+│   ├── sentiment/         # ClaudeSentimentProvider (budget-capped), KeywordSentimentProvider
+│   └── calendar/          # FMPCalendarProvider (primary), YFinanceCalendarProvider (fallback)
 ├── services/              # Business logic + persistence → see services/CLAUDE.md
 │   ├── database.py        # Engine + session factory + create_tables()
 │   ├── tables.py          # ORM table definitions (5 tables)
@@ -92,12 +93,12 @@ MarketDataAgent
     ↓
 SentimentAnalystAgent
     ↓
-SignalGeneratorAgent       ← STUB
+SignalGeneratorAgent
     ↓
 RiskManagerAgent           ← STUB
     │ (no approved signals? → END)
     ↓
-ExecutionAgent             ← STUB
+ExecutionAgent
     ↓
 END
 ```
@@ -119,6 +120,7 @@ to `.env` before running.
 | `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | — | Broker credentials |
 | `BENZINGA_API_KEY` | — | Premium news (optional) |
 | `POLYGON_API_KEY` | — | Premium market data (optional) |
+| `FMP_API_KEY` | — | FMP earnings calendar + estimates (optional; falls back to yfinance) |
 | `REDIS_URL` | `redis://localhost:6379/0` | Event bus |
 | `DATABASE_URL` | `sqlite:///data/trades.db` | Persistence |
 | `WATCHLIST` | `["AAPL","MSFT","GOOGL","AMZN","TSLA"]` | Tickers to monitor |
@@ -204,29 +206,29 @@ unless absolutely necessary with a comment explaining why.
 | **DebateRound / DebateVerdict / DebateResult models (Pattern A)** | **Done** |
 | **SignalGeneratorAgent — run + _build_signal + _debate_signal (Pattern A)** | **Done** |
 | **ClaudeSentimentProvider — per-event LLM tier routing + EARN_PRE prompt** | **Done** |
-| **RiskManagerAgent** | **TODO — stub** |
+| **EarningsCalendarEntry model + ReportTiming StrEnum** | **Done** |
+| **CalendarProvider Protocol** | **Done** |
+| **FMPCalendarProvider + YFinanceCalendarProvider** | **Done** |
+| **EarningsCalendarAgent — cron-driven EARN_PRE event synthesis** | **Done** |
 | **ExecutionAgent (Alpaca)** | **Done — paper trading, asyncio.to_thread, OrderRow persistence** |
-| **EarningsCalendarAgent** | **TODO — next: synthesise EARN_PRE events, populate EstimatesData in state** |
+| **RiskManagerAgent** | **TODO — stub** |
 | **Sentiment LLM routing Phase 2** | **TODO — blocked on EarningsCalendarAgent (EstimatesData in state)** |
 | **ExpiryScanner** | **TODO — calls Stage1Repository.record_outcome()** |
+| **Cron scheduler wiring in main.py** | **TODO — wires EarningsCalendarAgent + ExpiryScanner** |
 
 `SignalGeneratorAgent` is now implemented (Pattern A complete). `ClaudeSentimentProvider`
 now routes per event type — `quick` (Haiku) for non-earnings events, `deep` (Sonnet) for
 EARN_PRE/BEAT/MISS — and uses a specialised EARN_PRE system prompt (Phase 1 of the
 sentiment LLM routing spec). `ExecutionAgent` is now implemented — wraps the synchronous
-Alpaca `TradingClient` via `asyncio.to_thread`, persists orders to `OrderRow`, and handles
-`CLOSE` signal direction via portfolio position inspection. `RiskManagerAgent` remains a
-stub.
+Alpaca `TradingClient` via `asyncio.to_thread`, persists orders to `OrderRow`. `EarningsCalendarAgent`
+is complete — runs outside the main pipeline on a daily cron, synthesises EARN_PRE events.
+`RiskManagerAgent` remains a stub.
 
 **Next implementation sequence:**
-1. `EarningsCalendarAgent` — synthesises EARN_PRE events from a calendar feed, populates
-   `EstimatesData` in `PipelineState`, calls `Stage1Repository.load_historical_outcomes()`
-   for beat-rate sizing.
-2. **Sentiment LLM routing Phase 2** — inject `EstimatesRenderer.render()` into the EARN_PRE
-   prompt once `EarningsCalendarAgent` makes `EstimatesData` available in state. Specified in
-   `docs/architecture/sentiment-llm-routing-spec.md §Architecture Decision 2`.
-3. `RiskManagerAgent` — five-layer fail-fast risk checks; plan documented in session context.
-4. `ExpiryScanner` — closes expired Stage 1 positions via `Stage1Repository.record_outcome()`.
+1. **Sentiment LLM routing Phase 2** — inject `EstimatesRenderer.render()` into the EARN_PRE
+   prompt. Specified in `docs/architecture/sentiment-llm-routing-spec.md §Architecture Decision 2`.
+2. `RiskManagerAgent` — five-layer fail-fast risk checks.
+3. `ExpiryScanner` — closes expired Stage 1 positions via `Stage1Repository.record_outcome()`.
 
 ---
 
