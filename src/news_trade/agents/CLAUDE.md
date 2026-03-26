@@ -14,7 +14,7 @@ compute their stage, write results back, and return the updated state.
 | `SentimentAnalystAgent` | `sentiment_analyst.py` | Done |
 | `SignalGeneratorAgent` | `signal_generator.py` | **Done — Pattern A implemented** |
 | `RiskManagerAgent` | `risk_manager.py` | **STUB — all methods raise `NotImplementedError`** |
-| `ExecutionAgent` | `execution.py` | **STUB — all methods raise `NotImplementedError`** |
+| `ExecutionAgent` | `execution.py` | **Done — Alpaca paper trading integration** |
 | `OrchestratorAgent` | `orchestrator.py` | Not used — pipeline built via `graph/pipeline.py` directly |
 
 ---
@@ -119,8 +119,21 @@ Five check layers (fail-fast, in order):
 Inject `stage1_repo.load_all_open()` for the concentration check.
 See `docs/architecture/event-driven-signal-layer.md §7`.
 
-### `ExecutionAgent`
+### `ExecutionAgent` — Done
 
-Wraps Alpaca via `alpaca-py`. Constructor receives `AlpacaTradingClient`.
-Methods: `_submit_order()`, `_sync_order_status()`, `_cancel_order()`.
-Persists every `Order` to `OrderRow` via injected `Session`.
+Wraps Alpaca via `alpaca-py`. Constructor receives optional `TradingClient` and `Session`
+(both `None`-safe for tests). Translates `approved_signals` into `MarketOrderRequest` objects,
+wraps the synchronous Alpaca SDK in `asyncio.to_thread()`, maps responses to internal `Order`
+models, and upserts every order to `OrderRow` via the injected `Session`.
+
+| Method | Purpose |
+|---|---|
+| `run(state)` | Iterates `approved_signals`, calls `_submit_order()` per signal, logs each result |
+| `_submit_order(signal, portfolio)` | Builds `MarketOrderRequest`, calls Alpaca, returns `Order` |
+| `_sync_order_status(order)` | Polls Alpaca for updated status; updates `filled_qty`, `filled_avg_price` |
+| `_cancel_order(order)` | Cancels order on Alpaca; returns updated `Order` with `CANCELLED` status |
+| `_log_order(order)` | Upserts `OrderRow` to SQLite; no-op if `session=None` |
+
+Module-level helpers: `_signal_to_order_side()` (maps direction + portfolio → `OrderSide`),
+`_alpaca_to_order()` (maps alpaca-py `Order` → internal `Order`; unknown statuses fall back
+to `SUBMITTED`).

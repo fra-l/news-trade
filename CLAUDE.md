@@ -205,16 +205,18 @@ unless absolutely necessary with a comment explaining why.
 | **SignalGeneratorAgent — run + _build_signal + _debate_signal (Pattern A)** | **Done** |
 | **ClaudeSentimentProvider — per-event LLM tier routing + EARN_PRE prompt** | **Done** |
 | **RiskManagerAgent** | **TODO — stub** |
-| **ExecutionAgent (Alpaca)** | **TODO — stub** |
+| **ExecutionAgent (Alpaca)** | **Done — paper trading, asyncio.to_thread, OrderRow persistence** |
 | **EarningsCalendarAgent** | **TODO — calls Stage1Repository.load_historical_outcomes()** |
 | **ExpiryScanner** | **TODO — calls Stage1Repository.record_outcome()** |
 
 `SignalGeneratorAgent` is now implemented (Pattern A complete). `ClaudeSentimentProvider`
 now routes per event type — `quick` (Haiku) for non-earnings events, `deep` (Sonnet) for
 EARN_PRE/BEAT/MISS — and uses a specialised EARN_PRE system prompt (Phase 1 of the
-sentiment LLM routing spec). `RiskManagerAgent` and `ExecutionAgent` remain stubs
-(`NotImplementedError`). `EarningsCalendarAgent` and `ExpiryScanner` are the next planned
-additions — both wire into `Stage1Repository` which is now complete.
+sentiment LLM routing spec). `ExecutionAgent` is now implemented — wraps the synchronous
+Alpaca `TradingClient` via `asyncio.to_thread`, persists orders to `OrderRow`, and handles
+`CLOSE` signal direction via portfolio position inspection. `RiskManagerAgent` remains a
+stub. `EarningsCalendarAgent` and `ExpiryScanner` are the next planned additions — both
+wire into `Stage1Repository` which is now complete.
 
 ---
 
