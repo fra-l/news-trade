@@ -11,6 +11,7 @@ from alpaca.trading.client import TradingClient
 from langgraph.graph import END, StateGraph
 
 from news_trade.agents.execution import ExecutionAgent
+from news_trade.agents.halt_handler import HaltHandlerAgent
 from news_trade.agents.market_data import MarketDataAgent
 from news_trade.agents.news_ingestor import NewsIngestorAgent
 from news_trade.agents.risk_manager import RiskManagerAgent
@@ -38,6 +39,7 @@ SENTIMENT = "sentiment_analyst"
 SIGNAL = "signal_generator"
 RISK = "risk_manager"
 EXECUTION = "execution"
+HALT = "halt_handler"
 
 
 def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
@@ -108,6 +110,15 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
         session=exec_session,
     )
 
+    # HaltHandlerAgent reuses the same alpaca_client and stage1_repo already built
+    # above — no additional dependencies required.
+    halt_agent = HaltHandlerAgent(
+        settings,
+        event_bus,
+        alpaca_client=alpaca_client,
+        stage1_repo=stage1_repo,
+    )
+
     graph = StateGraph(PipelineState)
 
     # Register nodes
@@ -117,6 +128,7 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     graph.add_node(SIGNAL, signal_agent.run)
     graph.add_node(RISK, risk_agent.run)
     graph.add_node(EXECUTION, exec_agent.run)
+    graph.add_node(HALT, halt_agent.run)
 
     # Entry point
     graph.set_entry_point(NEWS)
@@ -133,13 +145,14 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     graph.add_edge(SENTIMENT, SIGNAL)
     graph.add_edge(SIGNAL, RISK)
 
-    # Conditional: only execute if risk approved at least one signal
+    # 3-way router after risk: halt takes priority, then execute, then end
     graph.add_conditional_edges(
         RISK,
-        _has_approved_signals,
-        {True: EXECUTION, False: END},
+        _route_after_risk,
+        {"halt": HALT, "execute": EXECUTION, "end": END},
     )
 
+    graph.add_edge(HALT, END)
     graph.add_edge(EXECUTION, END)
 
     return graph.compile()
@@ -153,3 +166,18 @@ def _has_news_events(state: PipelineState) -> bool:
 def _has_approved_signals(state: PipelineState) -> bool:
     """Return True if risk management approved at least one signal."""
     return bool(state.get("approved_signals"))
+
+
+def _route_after_risk(state: PipelineState) -> str:
+    """3-way router after RiskManagerAgent.
+
+    Priority order:
+      1. ``system_halted=True`` → halt_handler (drawdown breach; cleanup required)
+      2. ``approved_signals`` non-empty → execution
+      3. Otherwise → END (all signals rejected, no cleanup needed)
+    """
+    if state.get("system_halted"):
+        return "halt"
+    if state.get("approved_signals"):
+        return "execute"
+    return "end"

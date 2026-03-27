@@ -17,6 +17,7 @@ compute their stage, write results back, and return the updated state.
 | `ExecutionAgent` | `execution.py` | **Done — Alpaca paper trading integration** |
 | `EarningsCalendarAgent` | `earnings_calendar.py` | **Done — daily cron, outside LangGraph pipeline** |
 | `ExpiryScanner` | `expiry_scanner.py` | **Done — daily cron, marks OPEN positions EXPIRED** |
+| `HaltHandlerAgent` | `halt_handler.py` | **Done — cancels all orders, closes all positions, expires open Stage1 positions; wired as `halt_handler` node after `RiskManagerAgent`** |
 | `OrchestratorAgent` | `orchestrator.py` | Not used — pipeline built via `graph/pipeline.py` directly |
 
 ---
