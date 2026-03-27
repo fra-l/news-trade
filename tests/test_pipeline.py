@@ -13,6 +13,7 @@ from news_trade.config import (
 from news_trade.graph.pipeline import (
     _has_approved_signals,
     _has_news_events,
+    _route_after_risk,
     build_pipeline,
 )
 from news_trade.services.event_bus import EventBus
@@ -24,6 +25,7 @@ EXPECTED_NODES = {
     "signal_generator",
     "risk_manager",
     "execution",
+    "halt_handler",
 }
 
 
@@ -94,3 +96,22 @@ class TestHasApprovedSignals:
 
     def test_returns_false_when_key_absent(self):
         assert _has_approved_signals({}) is False
+
+
+class TestRouteAfterRisk:
+    def test_routes_to_halt_when_system_halted(self):
+        assert _route_after_risk({"system_halted": True}) == "halt"
+
+    def test_routes_to_execute_when_signals_approved(self):
+        assert _route_after_risk({"approved_signals": [object()]}) == "execute"
+
+    def test_routes_to_end_when_no_signals_and_not_halted(self):
+        assert _route_after_risk({}) == "end"
+
+    def test_routes_to_end_when_empty_approved_and_not_halted(self):
+        assert _route_after_risk({"approved_signals": []}) == "end"
+
+    def test_halt_takes_priority_over_approved_signals(self):
+        # Edge case: risk_dry_run=True can set system_halted=True with approved signals
+        state = {"system_halted": True, "approved_signals": [object()]}
+        assert _route_after_risk(state) == "halt"
