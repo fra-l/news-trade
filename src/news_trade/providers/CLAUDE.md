@@ -32,6 +32,13 @@ class CalendarProvider(Protocol):
     async def get_upcoming_earnings(
         self, tickers: list[str], from_date: date, to_date: date
     ) -> list[EarningsCalendarEntry]: ...
+
+class EstimatesProvider(Protocol):
+    @property
+    def name(self) -> str: ...
+    async def get_historical_beat_rate(
+        self, ticker: str, lookback: int = 8
+    ) -> float | None: ...
 ```
 
 All provider methods are `async`. Test mocks implement only the methods the test needs
@@ -52,6 +59,7 @@ All provider methods are `async`. Test mocks implement only the methods the test
 | Sentiment | `sentiment/keyword.py` | `KeywordSentimentProvider` | Free | — |
 | Calendar | `calendar/fmp.py` | `FMPCalendarProvider` | Free (250 req/day) | `FMP_API_KEY` |
 | Calendar | `calendar/yfinance_provider.py` | `YFinanceCalendarProvider` | Free | — |
+| Estimates | `estimates/fmp.py` | `FMPEstimatesProvider` | Free (250 req/day) | `FMP_API_KEY` |
 
 `ClaudeSentimentProvider` injects a full `LLMClientFactory` and selects the LLM tier per
 event inside `_select_client()`:
@@ -80,11 +88,16 @@ get_news_provider(settings)         # → RSSNewsProvider | BenzingaNewsProvider
 get_market_data_provider(settings)  # → YFinance | PolygonFree | PolygonPaid
 get_sentiment_provider(settings)    # → ClaudeSentimentProvider | KeywordSentimentProvider
 get_calendar_provider(settings)     # → FMPCalendarProvider (if FMP_API_KEY) | YFinanceCalendarProvider
+get_estimates_provider(settings)    # → FMPEstimatesProvider (if FMP_API_KEY) | None
 ```
 
 `get_calendar_provider` returns `FMPCalendarProvider` when `settings.fmp_api_key` is set
 (preferred — provides `eps_estimate` and `timing`). Falls back to `YFinanceCalendarProvider`
 automatically when no key is present.
+
+`get_estimates_provider` returns `FMPEstimatesProvider` when `settings.fmp_api_key` is set,
+or `None` when no key is present. Callers must handle `None` gracefully (fall back to
+`earn_default_beat_rate`).
 
 Selection is driven by `settings.news_provider`, `settings.market_data_provider`,
 and `settings.sentiment_provider` (enum fields in `config.py`).

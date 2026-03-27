@@ -222,6 +222,7 @@ unless absolutely necessary with a comment explaining why.
 | **TradeSignal `stage1_id` field** | **Done — links Stage 2 POST signals to Stage 1 position; unblocks RiskManagerAgent ADD exemption** |
 | **ExpiryScanner** | **Done — marks stale OPEN positions EXPIRED; 07:15 ET daily cron** |
 | **Cron scheduler wiring in main.py** | **Done — APScheduler AsyncIOScheduler; EarningsCalendarAgent 07:00 ET, ExpiryScanner 07:15 ET Mon-Fri** |
+| **FMPEstimatesProvider + EstimatesProvider Protocol** | **Done — fetches historical EPS beat rates from FMP earnings-surprises endpoint; three-tier fallback in `_handle_earn_pre()`: observed → FMP → static default; injected into EarningsCalendarAgent** |
 
 The full pipeline is now operational end-to-end for all event types. `SignalGeneratorAgent`
 implements the complete EARN_\* two-stage logic (Pattern D): EARN_PRE sizes from the
@@ -245,8 +246,6 @@ All deployment blockers are resolved. The system can run paper trading end-to-en
 all event types including the full earnings two-stage flow.
 
 **Remaining work (non-blocking enhancements):**
-- `FMPEstimatesProvider` (`providers/estimates/fmp.py`) — fetches live beat rates from FMP
-  to replace the `earn_default_beat_rate` fallback for EARN_PRE sizing
 - PEAD horizon expiry in `ExecutionAgent` — auto-close Stage 2 positions after `horizon_days`
 - `halt_handler` LangGraph node (`graph/pipeline.py`) — dedicated handler when `system_halted=True`
 

@@ -112,3 +112,28 @@ class CalendarProvider(Protocol):
             to_date: End of scan window (inclusive).
         """
         ...
+
+
+@runtime_checkable
+class EstimatesProvider(Protocol):
+    """Fetches historical EPS beat rates for use in EARN_PRE sizing."""
+
+    @property
+    def name(self) -> str:
+        """Human-readable provider name for logging (e.g. 'fmp_estimates')."""
+        ...
+
+    async def get_historical_beat_rate(
+        self, ticker: str, lookback: int = 8
+    ) -> float | None:
+        """Return the fraction of recent quarters where EPS beat consensus.
+
+        Args:
+            ticker: Stock symbol to look up.
+            lookback: Number of past quarters to include. Defaults to 8.
+
+        Returns:
+            Beat rate in ``[0.0, 1.0]``, or ``None`` when the data is
+            unavailable or insufficient.
+        """
+        ...

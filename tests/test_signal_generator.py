@@ -589,6 +589,70 @@ class TestHandleEarnPre:
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
 
+    # Three-tier fallback tests
+    def test_fmp_estimates_beat_rate_used_over_default(self):
+        """When source='fmp' and estimates carry historical_beat_rate, use it."""
+        agent = _make_earn_agent(beat_rate=None, source="fmp")
+        # Override the default beat rate to something that would produce SHORT;
+        # FMP estimates beat_rate=0.75 should win and produce LONG.
+        agent.settings = agent.settings.model_copy(
+            update={"earn_default_beat_rate": 0.57}
+        )
+        estimates_with_rate = {
+            "AAPL": _make_estimates().model_copy(update={"historical_beat_rate": 0.75})
+        }
+        signal = agent._build_signal(
+            self.sentiment, self.market,
+            {"earn-evt-1": self.event}, estimates_with_rate,
+        )
+        assert signal is not None
+        assert signal.direction == SignalDirection.LONG
+
+    def test_default_beat_rate_used_when_no_fmp_estimates(self):
+        """With source='fmp' and no estimates dict entry, fall back to default."""
+        agent = _make_earn_agent(beat_rate=None, source="fmp")
+        agent.settings = agent.settings.model_copy(
+            update={"earn_default_beat_rate": 0.65}
+        )
+        signal = agent._build_signal(
+            self.sentiment, self.market,
+            {"earn-evt-1": self.event}, {},  # empty estimates
+        )
+        # 0.65 → LONG
+        assert signal is not None
+        assert signal.direction == SignalDirection.LONG
+
+    def test_default_beat_rate_used_when_estimates_historical_beat_rate_is_none(self):
+        """With source='fmp' and historical_beat_rate=None, fall back to default."""
+        agent = _make_earn_agent(beat_rate=None, source="fmp")
+        agent.settings = agent.settings.model_copy(
+            update={"earn_default_beat_rate": 0.57}
+        )
+        estimates_no_rate = {
+            "AAPL": _make_estimates()  # historical_beat_rate defaults to None
+        }
+        signal = agent._build_signal(
+            self.sentiment, self.market,
+            {"earn-evt-1": self.event}, estimates_no_rate,
+        )
+        # 0.57 is in [0.55, 0.85] but < 0.60 → SHORT
+        assert signal is not None
+        assert signal.direction == SignalDirection.SHORT
+
+    def test_observed_beat_rate_overrides_fmp_estimates(self):
+        """Observed beat rate wins even when estimates carry historical_beat_rate."""
+        agent = _make_earn_agent(beat_rate=0.57, source="observed")
+        # FMP estimates say 0.75 (would be LONG), but observed 0.57 (<0.60) → SHORT
+        estimates_with_rate = {
+            "AAPL": _make_estimates().model_copy(update={"historical_beat_rate": 0.75})
+        }
+        signal = agent._build_signal(
+            self.sentiment, self.market,
+            {"earn-evt-1": self.event}, estimates_with_rate,
+        )
+        assert signal is not None
+        assert signal.direction == SignalDirection.SHORT
+
 
 # ---------------------------------------------------------------------------
 # TestHandleEarnPost
