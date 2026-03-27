@@ -139,6 +139,7 @@ to `.env` before running.
 | `EARN_MIN_ANALYST_COUNT` | `3` | Minimum analyst count for non-floor coverage score |
 | `EARN_GUIDANCE_WEIGHT` | `0.20` | Weight of guidance sentiment in composite surprise |
 | `EARN_DEFAULT_BEAT_RATE` | `0.65` | Fallback beat rate for EARN_PRE when < 4 observed outcomes exist |
+| `PEAD_HORIZON_DAYS` | `5` | Calendar days after EARN_BEAT/MISS fill before auto-close via PEAD expiry cron |
 | `MAX_OPEN_POSITIONS` | `5` | Max concurrent open positions (Stage 2 ADD exempt) |
 | `RISK_DRY_RUN` | `false` | Log risk rejections without blocking — calibration mode |
 
@@ -215,13 +216,14 @@ unless absolutely necessary with a comment explaining why.
 | **FMPCalendarProvider + YFinanceCalendarProvider** | **Done** |
 | **EarningsCalendarAgent — cron-driven EARN_PRE event synthesis** | **Done** |
 | **ExecutionAgent (Alpaca)** | **Done — paper trading, asyncio.to_thread, OrderRow persistence** |
+| **PEAD horizon expiry in `ExecutionAgent`** | **Done — `TradeSignal.horizon_days` + `OrderRow.close_after_date`; `scan_expired_pead()` cron closes Stage 2 positions at 09:45 ET** |
 | **RiskValidation model (`models/risk.py`)** | **Done — frozen audit model produced by RiskManagerAgent** |
 | **RiskManagerAgent — five-layer fail-fast checks** | **Done — confidence gate, drawdown halt, concentration, pending dedup, direction conflict; risk_dry_run mode** |
 | **SignalGeneratorAgent — ConfidenceScorer wiring (all event types)** | **Done — scorer injected; every signal exits _build_signal() with passed_confidence_gate set** |
 | **SignalGeneratorAgent — EARN_\* two-stage logic** | **Done — EARN_PRE sizes from beat_rate + persists Stage1; EARN_BEAT/MISS confirm/reverse; EARN_MIXED exits flat** |
 | **TradeSignal `stage1_id` field** | **Done — links Stage 2 POST signals to Stage 1 position; unblocks RiskManagerAgent ADD exemption** |
 | **ExpiryScanner** | **Done — marks stale OPEN positions EXPIRED; 07:15 ET daily cron** |
-| **Cron scheduler wiring in main.py** | **Done — APScheduler AsyncIOScheduler; EarningsCalendarAgent 07:00 ET, ExpiryScanner 07:15 ET Mon-Fri** |
+| **Cron scheduler wiring in main.py** | **Done — APScheduler AsyncIOScheduler; EarningsCalendarAgent 07:00 ET, ExpiryScanner 07:15 ET, PEADExpiryScanner 09:45 ET Mon-Fri** |
 | **FMPEstimatesProvider + EstimatesProvider Protocol** | **Done — fetches historical EPS beat rates from FMP earnings-surprises endpoint; three-tier fallback in `_handle_earn_pre()`: observed → FMP → static default; injected into EarningsCalendarAgent** |
 
 The full pipeline is now operational end-to-end for all event types. `SignalGeneratorAgent`
@@ -229,8 +231,10 @@ implements the complete EARN_\* two-stage logic (Pattern D): EARN_PRE sizes from
 historical beat rate and persists an `OpenStage1Position`; EARN_BEAT/MISS loads that
 position and confirms or reverses direction; EARN_MIXED exits flat with a CLOSE signal that
 bypasses the confidence gate. `ExpiryScanner` marks stale OPEN positions EXPIRED so the
-`RiskManagerAgent` concentration check stays accurate. Both agents are scheduled via
-`APScheduler` (`AsyncIOScheduler`) in `main.py` without blocking the polling loop.
+`RiskManagerAgent` concentration check stays accurate. EARN_BEAT/MISS signals carry a
+`horizon_days` value; `ExecutionAgent.scan_expired_pead()` auto-closes these positions when
+the horizon passes. All three cron agents are scheduled via `APScheduler` (`AsyncIOScheduler`)
+in `main.py` without blocking the polling loop.
 
 **Deployment blockers — minimum path to a running paper-trading instance:**
 
@@ -246,10 +250,10 @@ All deployment blockers are resolved. The system can run paper trading end-to-en
 all event types including the full earnings two-stage flow. `FMPEstimatesProvider` gives
 every ticker a calibrated historical beat rate from day one so EARN_PRE sizing never
 relies solely on the static 0.65 default; once ≥4 own quarters are observed the
-`Stage1Repository` data takes over.
+`Stage1Repository` data takes over. PEAD positions are now automatically closed after
+`PEAD_HORIZON_DAYS` calendar days via the 09:45 ET cron.
 
 **Remaining work (non-blocking enhancements):**
-- PEAD horizon expiry in `ExecutionAgent` — auto-close Stage 2 positions after `horizon_days`
 - `halt_handler` LangGraph node (`graph/pipeline.py`) — dedicated handler when `system_halted=True`
 
 ---

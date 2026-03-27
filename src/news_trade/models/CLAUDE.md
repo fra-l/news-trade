@@ -96,16 +96,23 @@ any signal where this is still `False`.
 
 ---
 
-## TradeSignal Two-Stage Field (Pattern D)
+## TradeSignal Two-Stage Fields (Pattern D)
 
 Added to `TradeSignal` by `SignalGeneratorAgent._handle_earn_pre()` and `_handle_earn_post()`:
 
 ```python
-stage1_id: str | None = None  # links a Stage 2 POST signal to its Stage 1 OpenStage1Position
+stage1_id: str | None = None     # links a Stage 2 POST signal to its Stage 1 OpenStage1Position
+horizon_days: int | None = None  # calendar days until auto-close; set for PEAD signals only
 ```
 
 `RiskManagerAgent` L2b (concentration check) exempts Stage 2 ADD signals where
 `stage1_id is not None` — they extend an existing position rather than opening a new one.
+
+`horizon_days` is set to `settings.pead_horizon_days` (default 5) by `_handle_earn_post()`
+for `EARN_BEAT` and `EARN_MISS` signals. `ExecutionAgent.run()` converts this to a
+`close_after_date = date.today() + timedelta(days=horizon_days)` stored on `OrderRow`.
+`EARN_PRE` signals leave `horizon_days=None` — Stage 1 positions are managed by
+`ExpiryScanner`, not the PEAD expiry cron.
 
 ---
 
