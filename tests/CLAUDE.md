@@ -17,11 +17,12 @@ No real network calls, no real API keys, no Redis, no file-system databases.
 | `test_estimates_renderer.py` | `EstimatesRenderer` | None (stateless) |
 | `test_confidence_scorer.py` | `ConfidenceScorer` | None (pure Python) |
 | `test_stage1_repository.py` | `Stage1Repository` | In-memory SQLite |
-| `test_earnings_calendar.py` | `EarningsCalendarAgent`, `EarningsCalendarEntry`, `_synthesise_event` | AsyncMock providers + in-memory SQLite |
+| `test_earnings_calendar.py` | `EarningsCalendarAgent`, `EarningsCalendarEntry`, `_synthesise_event`, `estimates_provider` wiring | AsyncMock providers + in-memory SQLite |
+| `test_fmp_estimates_provider.py` | `FMPEstimatesProvider` — beat rate computation, HTTP path, edge cases, protocol compliance | `sys.modules` aiohttp mock (aiohttp not installed in test env) |
 | `test_risk_rules.py` | Risk rules | Placeholder — all skipped |
 | `test_execution.py` | `ExecutionAgent` — order side mapping, Alpaca submission, `OrderRow` persistence | MagicMock Alpaca + in-memory SQLite |
 | `test_expiry_scanner.py` | `ExpiryScanner` — expired position marking, no-op on empty, real-repo integration | MagicMock `Stage1Repository` + in-memory SQLite |
-| `test_signal_generator.py` | `SignalGeneratorAgent` — generic signals, debate gate, EARN_\* two-stage logic, `_parse_calendar_fields` | MagicMock `Stage1Repository` + `ConfidenceScorer` |
+| `test_signal_generator.py` | `SignalGeneratorAgent` — generic signals, debate gate, EARN_\* two-stage logic, three-tier beat-rate fallback, `_parse_calendar_fields` | MagicMock `Stage1Repository` + `ConfidenceScorer` |
 
 ---
 
