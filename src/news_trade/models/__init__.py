@@ -2,6 +2,7 @@
 
 from news_trade.models.calendar import EarningsCalendarEntry, ReportTiming
 from news_trade.models.events import NewsEvent
+from news_trade.models.risk import RiskValidation
 from news_trade.models.market import MarketSnapshot, OHLCVBar
 from news_trade.models.orders import Order, OrderStatus
 from news_trade.models.portfolio import PortfolioState, Position
@@ -36,6 +37,7 @@ __all__ = [
     "OrderStatus",
     "PortfolioState",
     "Position",
+    "RiskValidation",
     "SentimentResult",
     "SignalStrength",
     "SurpriseDirection",
