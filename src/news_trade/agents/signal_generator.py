@@ -9,6 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from news_trade.agents.base import BaseAgent
+from news_trade.models.events import EventType, NewsEvent
 from news_trade.models.market import MarketSnapshot
 from news_trade.models.sentiment import SentimentLabel, SentimentResult
 from news_trade.models.signals import (
@@ -21,6 +22,7 @@ from news_trade.models.signals import (
 
 if TYPE_CHECKING:
     from news_trade.config import Settings
+    from news_trade.services.confidence_scorer import ConfidenceScorer
     from news_trade.services.event_bus import EventBus
     from news_trade.services.llm_client import LLMClientFactory
 
@@ -107,6 +109,7 @@ class SignalGeneratorAgent(BaseAgent):
         - Pair each SentimentResult with the corresponding market context.
         - Apply conviction thresholds and directional logic.
         - Compute suggested position size, stop-loss, and take-profit.
+        - Run ConfidenceScorer to set confidence_score and passed_confidence_gate.
         - Optionally run a bull/bear debate for high-confidence signals.
         - Emit TradeSignal instances for downstream risk validation.
     """
@@ -116,9 +119,11 @@ class SignalGeneratorAgent(BaseAgent):
         settings: Settings,
         event_bus: EventBus,
         llm: LLMClientFactory,
+        scorer: ConfidenceScorer,
     ) -> None:
         super().__init__(settings, event_bus)
         self._llm = llm
+        self._scorer = scorer
 
     async def run(self, state: dict) -> dict:  # type: ignore[type-arg]
         """Generate trade signals from sentiment results and market context.
@@ -128,6 +133,10 @@ class SignalGeneratorAgent(BaseAgent):
         """
         sentiment_results: list[SentimentResult] = state.get("sentiment_results", [])
         market_context: dict[str, MarketSnapshot] = state.get("market_context", {})
+        news_events: list[NewsEvent] = state.get("news_events", [])
+
+        # Build event lookup so _build_signal can access event_type and source.
+        event_lookup: dict[str, NewsEvent] = {e.event_id: e for e in news_events}
 
         trade_signals: list[TradeSignal] = []
         for sentiment in sentiment_results:
@@ -139,7 +148,7 @@ class SignalGeneratorAgent(BaseAgent):
                 )
                 continue
 
-            signal = self._build_signal(sentiment, market_ctx)
+            signal = self._build_signal(sentiment, market_ctx, event_lookup)
             if signal is None:
                 continue
 
@@ -154,12 +163,13 @@ class SignalGeneratorAgent(BaseAgent):
         self,
         sentiment: SentimentResult,
         market_ctx: MarketSnapshot,
+        event_lookup: dict[str, NewsEvent],
     ) -> TradeSignal | None:
         """Create a TradeSignal from a sentiment result and market snapshot.
 
         Returns None if the label is neutral or conviction is below the configured
-        threshold.
-
+        threshold.  Always calls ConfidenceScorer so that passed_confidence_gate
+        is set correctly before the signal reaches RiskManagerAgent.
         """
         match sentiment.label:
             case SentimentLabel.BULLISH | SentimentLabel.VERY_BULLISH:
@@ -180,7 +190,7 @@ class SignalGeneratorAgent(BaseAgent):
             market_ctx.latest_close, market_ctx.volatility_20d, direction
         )
 
-        return TradeSignal(
+        signal = TradeSignal(
             signal_id=str(uuid4()),
             event_id=sentiment.event_id,
             ticker=sentiment.ticker,
@@ -194,6 +204,18 @@ class SignalGeneratorAgent(BaseAgent):
             model_id=self._llm.quick.model_id,
             provider=self._llm.quick.provider,
         )
+
+        # Resolve event metadata for the scorer.
+        news_event = event_lookup.get(sentiment.event_id)
+        event_type = news_event.event_type if news_event else EventType.OTHER
+        source = news_event.source if news_event else "unknown"
+
+        score = self._scorer.score(
+            event_type=event_type,
+            sentiment=sentiment,
+            source=source,
+        )
+        return self._scorer.apply_gate(signal, event_type, score)
 
     def _compute_position_size(
         self, ticker: str, conviction: float, volatility: float

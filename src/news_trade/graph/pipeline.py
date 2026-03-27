@@ -23,9 +23,12 @@ from news_trade.providers import (
     get_news_provider,
     get_sentiment_provider,
 )
+from news_trade.services.confidence_scorer import ConfidenceScorer
 from news_trade.services.database import build_engine, build_session_factory
+from news_trade.services.estimates_renderer import EstimatesRenderer
 from news_trade.services.event_bus import EventBus
 from news_trade.services.llm_client import LLMClientFactory
+from news_trade.services.stage1_repository import Stage1Repository
 from news_trade.services.tables import Base
 
 # Node name constants
@@ -63,11 +66,32 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     Returns:
         A compiled LangGraph ``StateGraph``.
     """
-    news_agent = NewsIngestorAgent(settings, event_bus, provider=get_news_provider(settings))
-    market_agent = MarketDataAgent(settings, event_bus, provider=get_market_data_provider(settings))
-    sentiment_agent = SentimentAnalystAgent(settings, event_bus, provider=get_sentiment_provider(settings))
-    signal_agent = SignalGeneratorAgent(settings, event_bus, llm=LLMClientFactory(settings))
-    risk_agent = RiskManagerAgent(settings, event_bus)
+    news_agent = NewsIngestorAgent(
+        settings, event_bus, provider=get_news_provider(settings)
+    )
+    market_agent = MarketDataAgent(
+        settings, event_bus, provider=get_market_data_provider(settings)
+    )
+    sentiment_agent = SentimentAnalystAgent(
+        settings, event_bus, provider=get_sentiment_provider(settings)
+    )
+
+    # Shared DB session for Stage1Repository (used by SignalGenerator + RiskManager).
+    shared_engine = build_engine(settings)
+    Base.metadata.create_all(shared_engine)
+    shared_session = build_session_factory(settings)()
+    stage1_repo = Stage1Repository(shared_session)
+
+    scorer = ConfidenceScorer(settings=settings, renderer=EstimatesRenderer())
+
+    signal_agent = SignalGeneratorAgent(
+        settings,
+        event_bus,
+        llm=LLMClientFactory(settings),
+        scorer=scorer,
+    )
+    risk_agent = RiskManagerAgent(settings, event_bus, stage1_repo=stage1_repo)
+
     alpaca_client = TradingClient(
         api_key=settings.alpaca_api_key,
         secret_key=settings.alpaca_secret_key,

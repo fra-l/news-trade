@@ -172,6 +172,16 @@ class Settings(BaseSettings):
         description="Only debate signals whose confidence_score exceeds this value",
     )
 
+    # --- Risk manager ---
+    max_open_positions: int = Field(
+        default=5,
+        description="Max concurrent open positions; Stage 2 ADD signals are exempt",
+    )
+    risk_dry_run: bool = Field(
+        default=False,
+        description="Log risk rejections without blocking signals (calibration mode)",
+    )
+
 
 def get_settings() -> Settings:
     """Return a cached Settings instance."""

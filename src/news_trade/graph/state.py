@@ -52,3 +52,4 @@ class PipelineState(TypedDict, total=False):
 
     # Control flow
     errors: list[str]
+    system_halted: bool  # set True by RiskManagerAgent when drawdown limit is breached

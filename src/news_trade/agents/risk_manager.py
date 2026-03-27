@@ -2,45 +2,313 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from pydantic import BaseModel
+
 from news_trade.agents.base import BaseAgent
-from news_trade.models import PortfolioState, TradeSignal
+from news_trade.models.portfolio import PortfolioState
+from news_trade.models.risk import RiskValidation
+from news_trade.models.signals import SignalDirection, TradeSignal
+
+
+class _SystemHaltedEvent(BaseModel):
+    """Published to Redis when the drawdown halt is triggered."""
+
+    event: str = "SYSTEM_HALTED"
+    reason: str
+
+if TYPE_CHECKING:
+    from news_trade.config import Settings
+    from news_trade.services.event_bus import EventBus
+    from news_trade.services.stage1_repository import Stage1Repository
 
 
 class RiskManagerAgent(BaseAgent):
     """Gate-keeper that approves or rejects trade signals based on risk rules.
 
-    Responsibilities:
-        - Check per-position concentration limits.
-        - Enforce max number of concurrent positions.
-        - Verify drawdown is within acceptable bounds.
-        - Prevent duplicate/conflicting signals for the same ticker.
-        - Split signals into approved and rejected lists.
+    Five-layer fail-fast checks (executed in order per signal):
+
+    1. Confidence gate  — reject if ``passed_confidence_gate`` is False.
+    2a. Drawdown halt   — reject (non-EXIT) if portfolio drawdown >= threshold;
+                          sets ``system_halted=True`` in pipeline state.
+    2b. Concentration   — reject (non-EXIT, non-ADD) if open position count >= limit.
+    3a. Pending conflict — reject if ticker already approved in this batch.
+    3b. Size cap        — soft: log warning if position value exceeds
+                          ``max_position_pct``; no rejection (model uses
+                          ``suggested_qty`` not ``size_pct``).
+    3c. Direction conflict — reject if existing position has opposite direction.
+
+    When ``settings.risk_dry_run`` is True all checks still run and are logged, but
+    every signal is moved to ``approved_signals`` regardless of outcome.
     """
 
-    async def run(self, state: dict) -> dict:
+    def __init__(
+        self,
+        settings: Settings,
+        event_bus: EventBus,
+        stage1_repo: Stage1Repository,
+    ) -> None:
+        super().__init__(settings, event_bus)
+        self._stage1_repo = stage1_repo
+
+    # ------------------------------------------------------------------
+    # LangGraph node
+    # ------------------------------------------------------------------
+
+    async def run(self, state: dict) -> dict:  # type: ignore[type-arg]
         """Validate trade signals against current portfolio state.
 
         Returns:
-            ``{"approved_signals": [...], "rejected_signals": [...]}``
+            ``{"approved_signals": [...], "rejected_signals": [...],
+            "system_halted": bool}``
         """
-        raise NotImplementedError
+        signals: list[TradeSignal] = state.get("trade_signals", [])
+        portfolio: PortfolioState = state.get(
+            "portfolio", PortfolioState(equity=0.0, cash=0.0)
+        )
 
-    def _check_position_limit(
-        self, signal: TradeSignal, portfolio: PortfolioState
-    ) -> bool:
-        """Return True if the signal respects per-position size limits."""
-        raise NotImplementedError
+        approved: list[TradeSignal] = []
+        rejected: list[TradeSignal] = []
+        system_halted: bool = False
 
-    def _check_max_positions(self, portfolio: PortfolioState) -> bool:
-        """Return True if there is room for another position."""
-        raise NotImplementedError
+        # Precompute open-position count once (Stage1 positions + Alpaca positions).
+        stage1_open_count = len(self._stage1_repo.load_all_open())
+        open_count = stage1_open_count + portfolio.position_count
+
+        for signal in signals:
+            passed, reason, validation = self._evaluate(
+                signal, portfolio, open_count, approved
+            )
+
+            if not passed:
+                self.logger.warning(
+                    "Signal %s for %s REJECTED: %s",
+                    signal.signal_id,
+                    signal.ticker,
+                    reason,
+                )
+                if self.settings.risk_dry_run:
+                    self.logger.warning(
+                        "risk_dry_run=True — approving %s despite rejection: %s",
+                        signal.signal_id,
+                        reason,
+                    )
+                    approved.append(signal)
+                else:
+                    rejected.append(signal)
+
+                # Drawdown halt must be propagated even in dry-run.
+                if validation is not None and "drawdown_halt" in validation.checks_run:
+                    system_halted = True
+                    await self.event_bus.publish(
+                        "system_events",
+                        _SystemHaltedEvent(reason=reason or "drawdown limit breached"),
+                    )
+            else:
+                self.logger.info(
+                    "Signal %s for %s APPROVED (size=%s)",
+                    signal.signal_id,
+                    signal.ticker,
+                    validation.approved_size if validation else signal.suggested_qty,
+                )
+                approved.append(signal)
+
+        return {
+            "approved_signals": approved,
+            "rejected_signals": rejected,
+            "system_halted": system_halted,
+        }
+
+    # ------------------------------------------------------------------
+    # Core evaluation — returns (passed, reason, RiskValidation)
+    # ------------------------------------------------------------------
+
+    def _evaluate(
+        self,
+        signal: TradeSignal,
+        portfolio: PortfolioState,
+        open_count: int,
+        approved_so_far: list[TradeSignal],
+    ) -> tuple[bool, str | None, RiskValidation | None]:
+        """Run all five layers in order; return on first failure (fail-fast)."""
+        checks: list[str] = []
+
+        # L1 — confidence gate
+        gate_passed, gate_reason = self._check_confidence_gate(signal)
+        checks.append("confidence_gate")
+        if not gate_passed:
+            return (
+                False,
+                gate_reason,
+                RiskValidation(
+                    approved=False,
+                    rejection_reason=gate_reason,
+                    original_size=float(signal.suggested_qty),
+                    approved_size=None,
+                    checks_run=checks,
+                ),
+            )
+
+        # L2a — drawdown halt (EXIT signals bypass)
+        checks.append("drawdown_halt")
+        if (
+            not self._check_drawdown(portfolio)
+            and signal.direction != SignalDirection.CLOSE
+        ):
+            reason = (
+                f"drawdown {portfolio.max_drawdown_pct:.1%} >= "
+                f"limit {self.settings.max_drawdown_pct:.1%}"
+            )
+            return (
+                False,
+                reason,
+                RiskValidation(
+                    approved=False,
+                    rejection_reason=reason,
+                    original_size=float(signal.suggested_qty),
+                    approved_size=None,
+                    checks_run=checks,
+                ),
+            )
+
+        # L2b — concentration limit (EXIT signals bypass)
+        checks.append("concentration")
+        if not self._check_concentration(signal, open_count):
+            limit = self.settings.max_open_positions
+            reason = f"open positions {open_count} >= limit {limit}"
+            return (
+                False,
+                reason,
+                RiskValidation(
+                    approved=False,
+                    rejection_reason=reason,
+                    original_size=float(signal.suggested_qty),
+                    approved_size=None,
+                    checks_run=checks,
+                ),
+            )
+
+        # L3a — pending order conflict (within this batch)
+        checks.append("pending_conflict")
+        if self._check_pending_conflict(signal, approved_so_far):
+            reason = f"ticker {signal.ticker} already has a pending order in this batch"
+            return (
+                False,
+                reason,
+                RiskValidation(
+                    approved=False,
+                    rejection_reason=reason,
+                    original_size=float(signal.suggested_qty),
+                    approved_size=None,
+                    checks_run=checks,
+                ),
+            )
+
+        # L3b — size cap (soft, no reject)
+        checks.append("size_cap")
+        self._warn_size_cap(signal, portfolio)
+
+        # L3c — direction conflict
+        checks.append("direction_conflict")
+        dir_ok, dir_reason = self._check_direction_conflict(signal, portfolio)
+        if not dir_ok:
+            return (
+                False,
+                dir_reason,
+                RiskValidation(
+                    approved=False,
+                    rejection_reason=dir_reason,
+                    original_size=float(signal.suggested_qty),
+                    approved_size=None,
+                    checks_run=checks,
+                ),
+            )
+
+        validation = RiskValidation(
+            approved=True,
+            original_size=float(signal.suggested_qty),
+            approved_size=float(signal.suggested_qty),
+            checks_run=checks,
+        )
+        return True, None, validation
+
+    # ------------------------------------------------------------------
+    # Individual check helpers
+    # ------------------------------------------------------------------
+
+    def _check_confidence_gate(self, signal: TradeSignal) -> tuple[bool, str | None]:
+        """Layer 1 — reject if ConfidenceScorer did not set passed_confidence_gate."""
+        if not signal.passed_confidence_gate:
+            reason = signal.rejection_reason or "confidence gate not passed"
+            return False, reason
+        return True, None
 
     def _check_drawdown(self, portfolio: PortfolioState) -> bool:
-        """Return True if the portfolio drawdown is within the hard limit."""
-        raise NotImplementedError
+        """Layer 2a — return True if drawdown is within the hard limit."""
+        return portfolio.max_drawdown_pct < self.settings.max_drawdown_pct
 
-    def _has_conflicting_position(
-        self, signal: TradeSignal, portfolio: PortfolioState
+    def _check_concentration(self, signal: TradeSignal, open_count: int) -> bool:
+        """Layer 2b — return True if there is room for another position.
+
+        EXIT signals always pass.  Stage 2 ADD signals (stage1_id set) would also
+        be exempt, but stage1_id is not yet on the model — that exemption is a TODO
+        for when EARN_* Stage 2 logic is implemented.
+        """
+        if signal.direction == SignalDirection.CLOSE:
+            return True
+        return open_count < self.settings.max_open_positions
+
+    def _check_pending_conflict(
+        self, signal: TradeSignal, approved: list[TradeSignal]
     ) -> bool:
-        """Return True if an existing position conflicts with this signal."""
-        raise NotImplementedError
+        """Layer 3a — True if ticker already has a pending order in this batch."""
+        return signal.ticker in {s.ticker for s in approved}
+
+    def _warn_size_cap(self, signal: TradeSignal, portfolio: PortfolioState) -> None:
+        """Layer 3b — log a warning if position value would exceed max_position_pct.
+
+        No rejection: the current model uses ``suggested_qty`` (integer shares) rather
+        than ``size_pct``, making a hard cap impossible without a real-time price.
+        Full enforcement is deferred until the TradeSignal model is updated with
+        ``size_pct`` and ``entry_price`` is reliably set.
+        """
+        if signal.entry_price is None or portfolio.equity <= 0:
+            return
+        position_value = signal.suggested_qty * signal.entry_price
+        max_value = portfolio.equity * self.settings.max_position_pct
+        if position_value > max_value:
+            self.logger.warning(
+                "Signal %s size %.2f exceeds max_position_pct cap %.2f "
+                "(equity=%.2f, max_position_pct=%.2f) — not enforced until "
+                "TradeSignal.size_pct is implemented",
+                signal.signal_id,
+                position_value,
+                max_value,
+                portfolio.equity,
+                self.settings.max_position_pct,
+            )
+
+    def _check_direction_conflict(
+        self, signal: TradeSignal, portfolio: PortfolioState
+    ) -> tuple[bool, str | None]:
+        """Layer 3c — return True if no opposing position exists for this ticker.
+
+        EXIT signals always pass — they are meant to close existing positions.
+        """
+        if signal.direction == SignalDirection.CLOSE:
+            return True, None
+        existing = portfolio.get_position(signal.ticker)
+        if existing is None:
+            return True, None
+        # qty > 0 means long; qty < 0 means short
+        long_conflict = existing.qty > 0 and signal.direction == SignalDirection.SHORT
+        short_conflict = existing.qty < 0 and signal.direction == SignalDirection.LONG
+        if long_conflict or short_conflict:
+            side = "long" if existing.qty > 0 else "short"
+            reason = (
+                f"direction conflict: existing {side} position "
+                f"vs {signal.direction} signal for {signal.ticker}"
+            )
+            return False, reason
+        return True, None

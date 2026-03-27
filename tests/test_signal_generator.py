@@ -17,6 +17,7 @@ from news_trade.models.signals import (
     SignalDirection,
     TradeSignal,
 )
+from news_trade.services.confidence_scorer import ConfidenceScorer
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -86,7 +87,10 @@ def _make_agent(settings: Settings | None = None) -> SignalGeneratorAgent:
     llm_factory = MagicMock()
     llm_factory.quick = llm_quick
     llm_factory.deep = llm_deep
-    return SignalGeneratorAgent(settings=s, event_bus=event_bus, llm=llm_factory)
+    scorer = ConfidenceScorer(settings=s)
+    return SignalGeneratorAgent(
+        settings=s, event_bus=event_bus, llm=llm_factory, scorer=scorer
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +107,7 @@ class TestBuildSignal:
             label=SentimentLabel.BULLISH, score=0.85, confidence=0.90
         )
         market = _make_market()
-        signal = self.agent._build_signal(sentiment, market)
+        signal = self.agent._build_signal(sentiment, market, {})
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
         assert signal.ticker == "AAPL"
@@ -112,7 +116,7 @@ class TestBuildSignal:
         sentiment = _make_sentiment(
             label=SentimentLabel.VERY_BULLISH, score=0.95, confidence=0.95
         )
-        signal = self.agent._build_signal(sentiment, _make_market())
+        signal = self.agent._build_signal(sentiment, _make_market(), {})
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
 
@@ -120,7 +124,7 @@ class TestBuildSignal:
         sentiment = _make_sentiment(
             label=SentimentLabel.BEARISH, score=-0.80, confidence=0.85
         )
-        signal = self.agent._build_signal(sentiment, _make_market())
+        signal = self.agent._build_signal(sentiment, _make_market(), {})
         assert signal is not None
         assert signal.direction == SignalDirection.SHORT
 
@@ -128,7 +132,7 @@ class TestBuildSignal:
         sentiment = _make_sentiment(
             label=SentimentLabel.VERY_BEARISH, score=-0.90, confidence=0.90,
         )
-        signal = self.agent._build_signal(sentiment, _make_market())
+        signal = self.agent._build_signal(sentiment, _make_market(), {})
         assert signal is not None
         assert signal.direction == SignalDirection.SHORT
 
@@ -136,7 +140,7 @@ class TestBuildSignal:
         sentiment = _make_sentiment(
             label=SentimentLabel.NEUTRAL, score=0.0, confidence=0.50
         )
-        signal = self.agent._build_signal(sentiment, _make_market())
+        signal = self.agent._build_signal(sentiment, _make_market(), {})
         assert signal is None
 
     def test_below_conviction_threshold_returns_none(self):
@@ -144,13 +148,13 @@ class TestBuildSignal:
         sentiment = _make_sentiment(
             label=SentimentLabel.BULLISH, score=0.30, confidence=0.50
         )
-        signal = self.agent._build_signal(sentiment, _make_market())
+        signal = self.agent._build_signal(sentiment, _make_market(), {})
         assert signal is None
 
     def test_signal_fields_populated(self):
         sentiment = _make_sentiment()
         market = _make_market(latest_close=150.0, volatility_20d=0.20)
-        signal = self.agent._build_signal(sentiment, market)
+        signal = self.agent._build_signal(sentiment, market, {})
         assert signal is not None
         assert signal.event_id == sentiment.event_id
         assert signal.rationale == sentiment.reasoning
@@ -163,7 +167,7 @@ class TestBuildSignal:
         sentiment = _make_sentiment(
             label=SentimentLabel.BULLISH, score=0.9, confidence=0.9
         )
-        signal = self.agent._build_signal(sentiment, market)
+        signal = self.agent._build_signal(sentiment, market, {})
         assert signal is not None
         assert signal.stop_loss < 100.0  # long stop below entry
 
@@ -172,14 +176,14 @@ class TestBuildSignal:
         sentiment = _make_sentiment(
             label=SentimentLabel.BEARISH, score=-0.9, confidence=0.9
         )
-        signal = self.agent._build_signal(sentiment, market)
+        signal = self.agent._build_signal(sentiment, market, {})
         assert signal is not None
         assert signal.stop_loss > 100.0  # short stop above entry
 
     def test_position_size_positive(self):
         market = _make_market(volatility_20d=0.25)
         sentiment = _make_sentiment()
-        signal = self.agent._build_signal(sentiment, market)
+        signal = self.agent._build_signal(sentiment, market, {})
         assert signal is not None
         assert signal.suggested_qty >= 1
 
@@ -336,7 +340,10 @@ def _make_agent_with_llm(
     llm_factory = MagicMock()
     llm_factory.quick = quick
     llm_factory.deep = deep
-    return SignalGeneratorAgent(settings=settings, event_bus=event_bus, llm=llm_factory)
+    scorer = ConfidenceScorer(settings=settings)
+    return SignalGeneratorAgent(
+        settings=settings, event_bus=event_bus, llm=llm_factory, scorer=scorer
+    )
 
 
 class TestDebateSignalVerdicts:
