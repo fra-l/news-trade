@@ -212,7 +212,9 @@ unless absolutely necessary with a comment explaining why.
 | **FMPCalendarProvider + YFinanceCalendarProvider** | **Done** |
 | **EarningsCalendarAgent — cron-driven EARN_PRE event synthesis** | **Done** |
 | **ExecutionAgent (Alpaca)** | **Done — paper trading, asyncio.to_thread, OrderRow persistence** |
-| **RiskManagerAgent** | **TODO — stub** |
+| **RiskManagerAgent** | **TODO — stub (crashes pipeline on every run)** |
+| **SignalGeneratorAgent — ConfidenceScorer wiring (all event types)** | **TODO — gate never set; all signals rejected by RiskManagerAgent layer 1** |
+| **SignalGeneratorAgent — EARN_\* two-stage logic** | **TODO — EARN_PRE sizing, Stage1 persist, EARN_BEAT/MISS confirm/reverse** |
 | **ExpiryScanner** | **TODO — calls Stage1Repository.record_outcome()** |
 | **Cron scheduler wiring in main.py** | **TODO — wires EarningsCalendarAgent + ExpiryScanner** |
 
@@ -226,9 +228,25 @@ EARN_PRE user message so Claude reasons from analyst consensus data rather than 
 text alone. `ExecutionAgent` is done — wraps Alpaca via `asyncio.to_thread`, persists
 `OrderRow`. `RiskManagerAgent` remains a stub.
 
+**Deployment blockers — minimum path to a running paper-trading instance:**
+
+| Priority | Item | Why blocking |
+|---|---|---|
+| 1 | `RiskManagerAgent` | `run()` raises `NotImplementedError` — pipeline crashes on every cycle |
+| 2 | `ConfidenceScorer` wiring in `SignalGeneratorAgent` | `_build_signal()` never calls `apply_gate()`; every signal leaves with `passed_confidence_gate=False`; `RiskManagerAgent` layer 1 rejects all of them — zero trades ever execute |
+| 3 | Cron scheduler wiring in `main.py` | `EarningsCalendarAgent` is never triggered; EARN_PRE events never enter the pipeline |
+| 4 | `SignalGeneratorAgent` EARN_\* logic | EARN_PRE position sizing and Stage 1 persistence; EARN_BEAT/MISS confirm/reverse; without this the highest-value signal type is treated as a generic signal |
+| 5 | `ExpiryScanner` | Without it, expired Stage 1 positions accumulate in SQLite and inflate the concentration check in `RiskManagerAgent` over time |
+
+Items 1–3 unblock end-to-end paper trading for non-earnings event types (MA, guidance,
+analyst ratings, macro). Items 4–5 complete the earnings two-stage flow.
+
 **Next implementation sequence:**
-1. `RiskManagerAgent` — five-layer fail-fast risk checks.
-2. `ExpiryScanner` — closes expired Stage 1 positions via `Stage1Repository.record_outcome()`.
+1. `RiskManagerAgent` — five-layer fail-fast risk checks (see `docs/architecture/event-driven-signal-layer.md §7`).
+2. `ConfidenceScorer` wiring in `SignalGeneratorAgent` — inject `ConfidenceScorer` at construction; call `scorer.score()` + `scorer.apply_gate()` at the end of `_build_signal()` for all event types. Requires `ConfidenceScorer` and `Stage1Repository` added to constructor. Non-EARN events work with only `sentiment` + `source` inputs; EARN_\* logic is item 4.
+3. Cron scheduler wiring in `main.py` — schedule `EarningsCalendarAgent` at 07:00 ET Mon–Fri and `ExpiryScanner` on the same cadence.
+4. `SignalGeneratorAgent` EARN_\* two-stage logic — EARN_PRE sizing from `historical_beat_rate`, `OpenStage1Position` persistence; EARN_BEAT/MISS load + confirm/reverse (see `docs/architecture/event-driven-signal-layer.md §3`).
+5. `ExpiryScanner` — scan `Stage1Repository.load_expired()` and call `record_outcome()` for each.
 
 ---
 
