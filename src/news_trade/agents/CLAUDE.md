@@ -108,7 +108,7 @@ Prompt helpers are module-level functions: `_build_bull_prompt`, `_build_bear_pr
 
 | Handler | Trigger | Logic |
 |---|---|---|
-| `_handle_earn_pre()` | `EARN_PRE` | Loads `load_historical_outcomes(ticker)`; uses `beat_rate` if `source='observed'`, else `settings.earn_default_beat_rate`; skips if outside [0.55, 0.85]; sizes position [0.25–0.40]; persists `OpenStage1Position`; emits LONG/SHORT signal with `stage1_id` |
+| `_handle_earn_pre()` | `EARN_PRE` | Loads `load_historical_outcomes(ticker)`; three-tier fallback: (1) `source='observed'` beat_rate, (2) `estimates[ticker].historical_beat_rate` from FMP, (3) `settings.earn_default_beat_rate`; skips if outside [0.55, 0.85]; sizes position [0.25–0.40]; persists `OpenStage1Position`; emits LONG/SHORT signal with `stage1_id` |
 | `_handle_earn_post()` | `EARN_BEAT` / `EARN_MISS` | Loads `load_open(ticker)`; if agrees → `update_status(CONFIRMED)`, add remaining size; if disagrees → `update_status(REVERSED)`, full reverse; if no Stage 1 → fresh PEAD at 75% |
 | `_handle_earn_mixed()` | `EARN_MIXED` | Loads `load_open(ticker)`; if open → `update_status(EXITED)`, emit CLOSE signal with `passed_confidence_gate=True`; if no Stage 1 → return None |
 
@@ -172,6 +172,10 @@ Key dependencies to inject:
 - `primary: CalendarProvider` — `FMPCalendarProvider` (preferred; has `eps_estimate` + timing)
 - `fallback: CalendarProvider` — `YFinanceCalendarProvider` (no API key, used if FMP fails)
 - `engine: Engine` — SQLAlchemy engine for dedup check against `NewsEventRow`
+- `estimates_provider: EstimatesProvider | None` — optional; when provided, `run()` calls
+  `get_historical_beat_rate(ticker)` for each actionable entry and attaches the result to
+  `EstimatesData.historical_beat_rate` via `model_copy()`. Provider failures are swallowed
+  with a WARNING log so the run is never aborted.
 
 Core logic:
 - Scans `today → today + 5 days` for watchlist tickers

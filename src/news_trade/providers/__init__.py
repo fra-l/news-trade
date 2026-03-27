@@ -14,7 +14,13 @@ from news_trade.config import (
     Settings,
     get_settings,
 )
-from news_trade.providers.base import CalendarProvider, MarketDataProvider, NewsProvider, SentimentProvider
+from news_trade.providers.base import (
+    CalendarProvider,
+    EstimatesProvider,
+    MarketDataProvider,
+    NewsProvider,
+    SentimentProvider,
+)
 
 
 def get_news_provider(settings: Settings | None = None) -> NewsProvider:
@@ -40,10 +46,14 @@ def get_market_data_provider(settings: Settings | None = None) -> MarketDataProv
             from news_trade.providers.market.yfinance import YFinanceMarketProvider
             return YFinanceMarketProvider()
         case MarketDataProviderType.POLYGON_FREE:
-            from news_trade.providers.market.polygon_free import PolygonFreeMarketProvider
+            from news_trade.providers.market.polygon_free import (
+                PolygonFreeMarketProvider,
+            )
             return PolygonFreeMarketProvider(api_key=cfg.polygon_api_key)
         case MarketDataProviderType.POLYGON_PAID:
-            from news_trade.providers.market.polygon_paid import PolygonPaidMarketProvider
+            from news_trade.providers.market.polygon_paid import (
+                PolygonPaidMarketProvider,
+            )
             return PolygonPaidMarketProvider(api_key=cfg.polygon_api_key)
         case _:
             from news_trade.providers.market.yfinance import YFinanceMarketProvider
@@ -67,6 +77,21 @@ def get_sentiment_provider(settings: Settings | None = None) -> SentimentProvide
         case _:
             from news_trade.providers.sentiment.keyword import KeywordSentimentProvider
             return KeywordSentimentProvider()
+
+
+def get_estimates_provider(
+    settings: Settings | None = None,
+) -> EstimatesProvider | None:
+    """Return an FMPEstimatesProvider when an FMP API key is configured.
+
+    Returns ``None`` when no key is set so callers fall back to the static
+    ``earn_default_beat_rate`` without raising.
+    """
+    cfg = settings or get_settings()
+    if cfg.fmp_api_key:
+        from news_trade.providers.estimates.fmp import FMPEstimatesProvider
+        return FMPEstimatesProvider(api_key=cfg.fmp_api_key)
+    return None
 
 
 def get_calendar_provider(settings: Settings | None = None) -> CalendarProvider:

@@ -19,7 +19,7 @@ from news_trade.config import Settings
 from news_trade.models.calendar import EarningsCalendarEntry
 from news_trade.models.events import EventType, NewsEvent
 from news_trade.models.surprise import EstimatesData
-from news_trade.providers.base import CalendarProvider
+from news_trade.providers.base import CalendarProvider, EstimatesProvider
 from news_trade.services.event_bus import EventBus
 from news_trade.services.tables import Base, NewsEventRow
 
@@ -45,11 +45,13 @@ class EarningsCalendarAgent(BaseAgent):
         primary: CalendarProvider,
         fallback: CalendarProvider,
         engine: Engine,
+        estimates_provider: EstimatesProvider | None = None,
     ) -> None:
         super().__init__(settings, event_bus)
         self._primary = primary
         self._fallback = fallback
         self._engine = engine
+        self._estimates_provider = estimates_provider
         Base.metadata.create_all(self._engine)
 
     async def run(self, state: dict) -> dict:  # type: ignore[type-arg]
@@ -79,8 +81,20 @@ class EarningsCalendarAgent(BaseAgent):
         # so SentimentAnalystAgent always has estimates context when available.
         for entry in actionable:
             est = _build_estimates(entry)
-            if est is not None:
-                estimates[entry.ticker] = est
+            if est is None:
+                continue
+            if self._estimates_provider is not None:
+                try:
+                    rate = await self._estimates_provider.get_historical_beat_rate(
+                        entry.ticker
+                    )
+                    if rate is not None:
+                        est = est.model_copy(update={"historical_beat_rate": rate})
+                except Exception as exc:
+                    self.logger.warning(
+                        "EstimatesProvider failed for %s: %s", entry.ticker, exc
+                    )
+            estimates[entry.ticker] = est
 
         with Session(self._engine) as session:
             for entry in actionable:

@@ -13,7 +13,7 @@ from news_trade.agents.expiry_scanner import ExpiryScanner
 from news_trade.config import get_settings
 from news_trade.graph.pipeline import build_pipeline
 from news_trade.graph.state import PipelineState
-from news_trade.providers import get_calendar_provider
+from news_trade.providers import get_calendar_provider, get_estimates_provider
 from news_trade.providers.calendar.yfinance_provider import YFinanceCalendarProvider
 from news_trade.services.database import (
     build_engine,
@@ -67,6 +67,7 @@ async def main() -> None:
         primary=get_calendar_provider(settings),
         fallback=YFinanceCalendarProvider(),
         engine=cron_engine,
+        estimates_provider=get_estimates_provider(settings),
     )
     expiry_scanner = ExpiryScanner(settings, event_bus, stage1_repo=cron_stage1_repo)
 

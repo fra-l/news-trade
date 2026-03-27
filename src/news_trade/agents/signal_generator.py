@@ -285,12 +285,26 @@ class SignalGeneratorAgent(BaseAgent):
         if outcomes.source == "observed" and outcomes.beat_rate is not None:
             beat_rate = outcomes.beat_rate
         else:
-            beat_rate = self.settings.earn_default_beat_rate
-            self.logger.info(
-                "EARN_PRE %s: insufficient observed history (%d samples) "
-                "— using default beat_rate=%.2f",
-                ticker, outcomes.sample_size, beat_rate,
+            ticker_estimates = estimates.get(ticker)
+            fmp_rate = (
+                ticker_estimates.historical_beat_rate
+                if ticker_estimates is not None
+                else None
             )
+            if fmp_rate is not None:
+                beat_rate = fmp_rate
+                self.logger.info(
+                    "EARN_PRE %s: using FMP historical beat_rate=%.2f "
+                    "(observed sample too small: %d quarters)",
+                    ticker, beat_rate, outcomes.sample_size,
+                )
+            else:
+                beat_rate = self.settings.earn_default_beat_rate
+                self.logger.info(
+                    "EARN_PRE %s: insufficient observed history (%d samples), "
+                    "no FMP data — using default beat_rate=%.2f",
+                    ticker, outcomes.sample_size, beat_rate,
+                )
 
         if beat_rate < _BEAT_RATE_MIN or beat_rate > _BEAT_RATE_MAX:
             self.logger.info(

@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -527,3 +528,113 @@ class TestEarningsCalendarAgentEstimatesState:
         assert result["news_events"] == []
         assert "AAPL" in result["estimates"]
         assert result["estimates"]["AAPL"].eps_estimate == 1.55
+
+
+# ---------------------------------------------------------------------------
+# TestEarningsCalendarAgentEstimatesProvider
+# ---------------------------------------------------------------------------
+
+
+class TestEarningsCalendarAgentEstimatesProvider:
+    """Verify that estimates_provider populates historical_beat_rate."""
+
+    def setup_method(self) -> None:
+        self.engine = _make_engine()
+        self.settings = _make_settings()
+        self.event_bus = AsyncMock()
+        self.event_bus.publish = AsyncMock()
+
+    def _make_primary(self, entries: list) -> AsyncMock:
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(return_value=entries)
+        return primary
+
+    def _make_fallback(self) -> AsyncMock:
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
+        return fallback
+
+    async def test_beat_rate_populated_when_provider_returns_value(self) -> None:
+        entry = _make_entry(ticker="AAPL", eps_estimate=2.50)
+        estimates_provider = AsyncMock()
+        estimates_provider.get_historical_beat_rate = AsyncMock(return_value=0.72)
+
+        agent = EarningsCalendarAgent(
+            self.settings,
+            self.event_bus,
+            self._make_primary([entry]),
+            self._make_fallback(),
+            self.engine,
+            estimates_provider=estimates_provider,
+        )
+        result = await agent.run({})
+        assert result["estimates"]["AAPL"].historical_beat_rate == pytest.approx(0.72)
+
+    async def test_beat_rate_none_when_no_estimates_provider(self) -> None:
+        entry = _make_entry(ticker="AAPL", eps_estimate=2.50)
+
+        agent = EarningsCalendarAgent(
+            self.settings,
+            self.event_bus,
+            self._make_primary([entry]),
+            self._make_fallback(),
+            self.engine,
+            estimates_provider=None,
+        )
+        result = await agent.run({})
+        assert result["estimates"]["AAPL"].historical_beat_rate is None
+
+    async def test_beat_rate_none_when_provider_returns_none(self) -> None:
+        entry = _make_entry(ticker="AAPL", eps_estimate=2.50)
+        estimates_provider = AsyncMock()
+        estimates_provider.get_historical_beat_rate = AsyncMock(return_value=None)
+
+        agent = EarningsCalendarAgent(
+            self.settings,
+            self.event_bus,
+            self._make_primary([entry]),
+            self._make_fallback(),
+            self.engine,
+            estimates_provider=estimates_provider,
+        )
+        result = await agent.run({})
+        assert result["estimates"]["AAPL"].historical_beat_rate is None
+
+    async def test_estimates_provider_exception_is_swallowed(self) -> None:
+        """A failing EstimatesProvider should not abort the run."""
+        entry = _make_entry(ticker="AAPL", eps_estimate=2.50)
+        estimates_provider = AsyncMock()
+        estimates_provider.get_historical_beat_rate = AsyncMock(
+            side_effect=RuntimeError("FMP quota exceeded")
+        )
+
+        agent = EarningsCalendarAgent(
+            self.settings,
+            self.event_bus,
+            self._make_primary([entry]),
+            self._make_fallback(),
+            self.engine,
+            estimates_provider=estimates_provider,
+        )
+        # Must not raise
+        result = await agent.run({})
+        assert "AAPL" in result["estimates"]
+        assert result["estimates"]["AAPL"].historical_beat_rate is None
+
+    async def test_provider_called_once_per_ticker(self) -> None:
+        entry = _make_entry(ticker="AAPL", eps_estimate=2.50)
+        estimates_provider = AsyncMock()
+        estimates_provider.get_historical_beat_rate = AsyncMock(return_value=0.68)
+
+        agent = EarningsCalendarAgent(
+            self.settings,
+            self.event_bus,
+            self._make_primary([entry]),
+            self._make_fallback(),
+            self.engine,
+            estimates_provider=estimates_provider,
+        )
+        await agent.run({})
+        estimates_provider.get_historical_beat_rate.assert_called_once_with("AAPL")
