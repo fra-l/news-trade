@@ -89,6 +89,7 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
         event_bus,
         llm=LLMClientFactory(settings),
         scorer=scorer,
+        stage1_repo=stage1_repo,
     )
     risk_agent = RiskManagerAgent(settings, event_bus, stage1_repo=stage1_repo)
 

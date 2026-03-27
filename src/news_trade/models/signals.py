@@ -90,6 +90,12 @@ class TradeSignal(BaseModel):
         description="Human-readable reason if passed_confidence_gate is False",
     )
 
+    # Two-stage earnings fields (Pattern D)
+    stage1_id: str | None = Field(
+        default=None,
+        description="Links a Stage 2 POST signal to its Stage 1 OpenStage1Position id",
+    )
+
     # Pattern A — debate result
     debate_result: DebateResult | None = Field(
         default=None,
