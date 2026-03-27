@@ -19,6 +19,7 @@ All models use Pydantic v2. Value objects are frozen (`ConfigDict(frozen=True)`)
 | `calendar.py` | `ReportTiming` (StrEnum), `EarningsCalendarEntry` | Yes |
 | `orders.py` | `OrderSide`, `OrderStatus`, `OrderType`, `Order` | Yes |
 | `portfolio.py` | `Position`, `PortfolioState` | Yes |
+| `risk.py` | `RiskValidation` | Yes |
 
 ---
 
@@ -109,6 +110,15 @@ Each `DebateRound` (frozen) stores `round_number`, `bull_argument`, and `bear_ar
 
 The debate only runs when `signal_debate_rounds > 0` (default 0 — disabled) **and**
 `confidence_score >= signal_debate_threshold` (default 0.70).
+
+---
+
+## Risk Validation Model
+
+`RiskValidation` (`risk.py`) is a frozen audit record produced by `RiskManagerAgent` for
+each evaluated signal. Fields: `approved`, `rejection_reason`, `original_size`,
+`approved_size` (may be reduced by L3b), `checks_run` (ordered list of layer names),
+`checked_at`. Never stored to SQLite — exists only in agent memory for logging.
 
 ---
 

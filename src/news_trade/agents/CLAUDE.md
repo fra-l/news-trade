@@ -13,7 +13,7 @@ compute their stage, write results back, and return the updated state.
 | `MarketDataAgent` | `market_data.py` | Done |
 | `SentimentAnalystAgent` | `sentiment_analyst.py` | Done |
 | `SignalGeneratorAgent` | `signal_generator.py` | **Done — Pattern A implemented** |
-| `RiskManagerAgent` | `risk_manager.py` | **STUB — all methods raise `NotImplementedError`** |
+| `RiskManagerAgent` | `risk_manager.py` | **Done — five-layer fail-fast checks; risk_dry_run mode** |
 | `ExecutionAgent` | `execution.py` | **Done — Alpaca paper trading integration** |
 | `EarningsCalendarAgent` | `earnings_calendar.py` | **Done — daily cron, outside LangGraph pipeline** |
 | `ExpiryScanner` | `expiry_scanner.py` | **TODO** |
@@ -44,8 +44,8 @@ repositories) are injected in the subclass `__init__` — never fetched from glo
 | `NewsIngestorAgent` | `last_poll` | `news_events`, `errors` |
 | `MarketDataAgent` | `news_events` | `market_context` (dict[ticker → MarketSnapshot]) |
 | `SentimentAnalystAgent` | `news_events`, `estimates` (optional) | `sentiment_results` |
-| `SignalGeneratorAgent` | `sentiment_results`, `market_context` | `trade_signals` |
-| `RiskManagerAgent` | `trade_signals`, `portfolio` | `approved_signals`, `rejected_signals` |
+| `SignalGeneratorAgent` | `sentiment_results`, `market_context`, `news_events` | `trade_signals` |
+| `RiskManagerAgent` | `trade_signals`, `portfolio` | `approved_signals`, `rejected_signals`, `system_halted` |
 | `ExecutionAgent` | `approved_signals` | `orders` |
 | `EarningsCalendarAgent` | — (reads `settings.watchlist`) | `news_events`, `estimates`, `errors` |
 
@@ -85,14 +85,14 @@ Routing logic: `graph/pipeline.py` — `_has_news_events()` and `_has_approved_s
 
 ## Implemented: `SignalGeneratorAgent`
 
-Accepts `llm: LLMClientFactory` at construction time (no other service deps yet).
+Accepts `llm: LLMClientFactory` and `scorer: ConfidenceScorer` at construction time.
 
 ### What is implemented (Pattern A)
 
 | Method | Purpose |
 |---|---|
-| `run(state)` | Iterates `sentiment_results`, pairs with `market_context`, calls `_build_signal()`, then `_debate_signal()` for gate-passed signals |
-| `_build_signal(sentiment, market_ctx)` | Maps label → direction; computes conviction; applies `min_signal_conviction` threshold; returns `TradeSignal` or `None` |
+| `run(state)` | Iterates `sentiment_results`, pairs with `market_context`, builds `event_lookup` dict from `news_events`, calls `_build_signal()`, then `_debate_signal()` for gate-passed signals |
+| `_build_signal(sentiment, market_ctx, event_lookup)` | Maps label → direction; computes conviction; applies `min_signal_conviction` threshold; calls `scorer.score()` + `scorer.apply_gate()` to set `confidence_score` and `passed_confidence_gate`; returns `TradeSignal` or `None` |
 | `_compute_position_size(ticker, conviction, volatility)` | Volatility-adjusted heuristic: `max(1, int(conviction / max(vol, 0.01) * 10))` |
 | `_compute_stop_loss(entry, volatility, direction)` | 2× daily vol proxy offset from entry; LONG → below, SHORT → above |
 | `_debate_signal(signal)` | Bull/bear debate gate — skips if `signal_debate_rounds=0` or below `signal_debate_threshold`; applies CONFIRM/REDUCE/REJECT verdict |
@@ -103,41 +103,33 @@ Prompt helpers are module-level functions: `_build_bull_prompt`, `_build_bear_pr
 
 ### What is NOT yet implemented in `SignalGeneratorAgent`
 
-**Deployment blocker — `ConfidenceScorer` not wired (affects ALL event types):**
-
-`_build_signal()` returns a `TradeSignal` with `passed_confidence_gate=False` (the Pydantic
-default). `ConfidenceScorer.apply_gate()` is never called. Because `RiskManagerAgent` layer
-1 rejects any signal with `passed_confidence_gate=False`, **no signal will ever reach
-`ExecutionAgent`** once the risk manager is implemented — even for non-earnings events.
-
-Fix requires:
-- Add `ConfidenceScorer` and `Stage1Repository` to the constructor
-- At the end of `_build_signal()`, call `scorer.score(event_type, sentiment=sentiment, source=source)` then `scorer.apply_gate(signal, event_type, score)` for all event types
-- Non-EARN events work with only `sentiment` + `source`; no structural change needed
-
-**EARN_\* two-stage logic (also requires `ConfidenceScorer` + `Stage1Repository`):**
+**EARN_\* two-stage logic (requires `Stage1Repository` added to constructor):**
 - `EARN_PRE` — size from `historical_beat_rate` via `Stage1Repository.load_historical_outcomes()`; persist `OpenStage1Position`
 - `EARN_BEAT/MISS` — load open Stage 1 position; confirm (add) or reverse; call `Stage1Repository.update_status()`
 - `EARN_MIXED` — emit EXIT signal (ConfidenceScorer gate 1.01 always fails — by design)
 
 See `docs/architecture/event-driven-signal-layer.md §3` for the full decision tree.
 
-## Stub Agents
+## Implemented: `RiskManagerAgent` ✅
 
-### `RiskManagerAgent`
+Constructor: `settings`, `event_bus`, `stage1_repo: Stage1Repository`.
 
 Five check layers (fail-fast, in order):
-1. `passed_confidence_gate` — reject if False
-2. Drawdown halt — reject + set `system_halted=True` if portfolio drawdown ≥ `max_drawdown_pct`
-3. Concentration limit — reject if `open_positions >= max_open_positions` (Stage 2 ADD exempt)
-4. Pending order conflict — reject if ticker already has a pending order
-5. Position size cap — reduce `size_pct` to `max_position_pct` (soft limit, not reject)
 
-Inject `stage1_repo.load_all_open()` for the concentration check.
-See `docs/architecture/event-driven-signal-layer.md §7`.
+| Layer | Check | Action |
+|---|---|---|
+| L1 | `passed_confidence_gate` | REJECT using `signal.rejection_reason` |
+| L2a | `portfolio.max_drawdown_pct >= settings.max_drawdown_pct` (non-EXIT) | REJECT + set `system_halted=True` + publish `SYSTEM_HALTED` to event_bus |
+| L2b | `open_count >= settings.max_open_positions` (non-EXIT) | REJECT; `open_count = len(stage1_repo.load_all_open()) + portfolio.position_count` |
+| L3a | ticker in `{s.ticker for s in approved_so_far}` | REJECT (within-batch dedup) |
+| L3b | position value > `equity * max_position_pct` | WARN only — `suggested_qty` model; no hard reject yet |
+| L3c | existing position has opposite direction | REJECT |
 
-**Deployment note:** Layer 1 (`passed_confidence_gate`) means `RiskManagerAgent` is only
-useful once `ConfidenceScorer` is wired into `SignalGeneratorAgent`. Implement both together.
+`settings.risk_dry_run=True` runs all checks and logs, but moves every signal to
+`approved_signals` regardless (calibration mode).
+
+`_evaluate(signal, portfolio, open_count, approved_so_far)` returns
+`(passed: bool, reason: str | None, RiskValidation | None)` — call once per signal.
 
 ### `ExecutionAgent` — Done
 
