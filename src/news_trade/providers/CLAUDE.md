@@ -62,16 +62,14 @@ event inside `_select_client()`:
 | All other types (M&A, guidance, macro, analyst, etc.) | `.quick` (Haiku) | Simple label + score; ~25× cheaper |
 
 `EARN_PRE` events also receive a specialised system prompt (`_EARN_PRE_SYSTEM_PROMPT`) that
-instructs the model to reason from pre-announcement signals. `self._llm` always points to
-`.deep` so budget cost estimates remain conservative even for quick-tier calls.
+instructs the model to reason from pre-announcement signals. When `state["estimates"]`
+contains an `EstimatesData` entry for the ticker, `analyse_batch()` appends the
+`EstimatesRenderer.render()` narrative block to the user message, giving Claude
+pre-computed analyst context (EPS consensus, estimate dispersion, historical beat rate)
+rather than inferring from headline text alone. `self._llm` always points to `.deep` so
+budget cost estimates remain conservative even for quick-tier calls.
 Enforces a daily budget cap (`settings.claude_daily_budget_usd`); returns a neutral
 `SentimentResult` (not an exception) when the cap is hit.
-
-**Sentiment LLM routing Phase 2 (pending):** Once `EarningsCalendarAgent` populates
-`EstimatesData` in `PipelineState`, extend `analyse_batch()` to accept optional estimates
-per ticker and inject `EstimatesRenderer.render()` into the EARN_PRE prompt. This replaces
-headline-only inference with structured analyst context (estimates, dispersion, beat rate).
-See `docs/architecture/sentiment-llm-routing-spec.md §Architecture Decision 2`.
 
 ---
 
