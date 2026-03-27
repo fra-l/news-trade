@@ -105,7 +105,7 @@ END
 
 `PipelineState` (`graph/state.py`) is a `TypedDict` containing: `news_events`,
 `market_context`, `sentiment_results`, `trade_signals`, `approved_signals`,
-`rejected_signals`, `orders`, `portfolio`, `errors`.
+`rejected_signals`, `orders`, `portfolio`, `errors`, `system_halted`.
 
 ---
 
@@ -138,6 +138,8 @@ to `.env` before running.
 | `EARN_STRONG_SIGMA_THRESHOLD` | `2.0` | Sigma threshold for STRONG signal tier |
 | `EARN_MIN_ANALYST_COUNT` | `3` | Minimum analyst count for non-floor coverage score |
 | `EARN_GUIDANCE_WEIGHT` | `0.20` | Weight of guidance sentiment in composite surprise |
+| `MAX_OPEN_POSITIONS` | `5` | Max concurrent open positions (Stage 2 ADD exempt) |
+| `RISK_DRY_RUN` | `false` | Log risk rejections without blocking — calibration mode |
 
 ---
 
@@ -212,41 +214,42 @@ unless absolutely necessary with a comment explaining why.
 | **FMPCalendarProvider + YFinanceCalendarProvider** | **Done** |
 | **EarningsCalendarAgent — cron-driven EARN_PRE event synthesis** | **Done** |
 | **ExecutionAgent (Alpaca)** | **Done — paper trading, asyncio.to_thread, OrderRow persistence** |
-| **RiskManagerAgent** | **TODO — stub (crashes pipeline on every run)** |
-| **SignalGeneratorAgent — ConfidenceScorer wiring (all event types)** | **TODO — gate never set; all signals rejected by RiskManagerAgent layer 1** |
+| **RiskValidation model (`models/risk.py`)** | **Done — frozen audit model produced by RiskManagerAgent** |
+| **RiskManagerAgent — five-layer fail-fast checks** | **Done — confidence gate, drawdown halt, concentration, pending dedup, direction conflict; risk_dry_run mode** |
+| **SignalGeneratorAgent — ConfidenceScorer wiring (all event types)** | **Done — scorer injected; every signal exits _build_signal() with passed_confidence_gate set** |
 | **SignalGeneratorAgent — EARN_\* two-stage logic** | **TODO — EARN_PRE sizing, Stage1 persist, EARN_BEAT/MISS confirm/reverse** |
 | **ExpiryScanner** | **TODO — calls Stage1Repository.record_outcome()** |
 | **Cron scheduler wiring in main.py** | **TODO — wires EarningsCalendarAgent + ExpiryScanner** |
 
-`SignalGeneratorAgent` is now implemented (Pattern A complete). `ClaudeSentimentProvider`
-routes per event type — `quick` (Haiku) for non-earnings events, `deep` (Sonnet) for
-EARN_PRE/BEAT/MISS — and uses a specialised EARN_PRE system prompt. Sentiment LLM routing
-Phase 2 is complete: `EarningsCalendarAgent` now builds `EstimatesData` from calendar
-entries and populates `state["estimates"]`; `SentimentAnalystAgent` passes this dict to
-`analyse_batch()`; `ClaudeSentimentProvider` injects `EstimatesRenderer.render()` into the
-EARN_PRE user message so Claude reasons from analyst consensus data rather than headline
-text alone. `ExecutionAgent` is done — wraps Alpaca via `asyncio.to_thread`, persists
-`OrderRow`. `RiskManagerAgent` remains a stub.
+`SignalGeneratorAgent` is now implemented (Pattern A complete) with `ConfidenceScorer`
+fully wired — every signal leaving `_build_signal()` carries a `confidence_score` and a
+correct `passed_confidence_gate` flag. `RiskManagerAgent` is fully implemented with
+five-layer fail-fast checks: confidence gate → drawdown halt (publishes `SYSTEM_HALTED`,
+sets `state["system_halted"]`) → concentration limit (Stage1 + Alpaca positions) →
+within-batch ticker dedup → direction conflict. A `risk_dry_run` mode logs rejections
+without blocking signals during calibration. `ClaudeSentimentProvider` routes per event
+type and injects `EstimatesRenderer.render()` into EARN_PRE prompts. `ExecutionAgent` is
+done — wraps Alpaca via `asyncio.to_thread`, persists `OrderRow`. The pipeline no longer
+crashes; non-earnings signals with sufficient confidence now reach `ExecutionAgent`.
 
 **Deployment blockers — minimum path to a running paper-trading instance:**
 
-| Priority | Item | Why blocking |
-|---|---|---|
-| 1 | `RiskManagerAgent` | `run()` raises `NotImplementedError` — pipeline crashes on every cycle |
-| 2 | `ConfidenceScorer` wiring in `SignalGeneratorAgent` | `_build_signal()` never calls `apply_gate()`; every signal leaves with `passed_confidence_gate=False`; `RiskManagerAgent` layer 1 rejects all of them — zero trades ever execute |
-| 3 | Cron scheduler wiring in `main.py` | `EarningsCalendarAgent` is never triggered; EARN_PRE events never enter the pipeline |
-| 4 | `SignalGeneratorAgent` EARN_\* logic | EARN_PRE position sizing and Stage 1 persistence; EARN_BEAT/MISS confirm/reverse; without this the highest-value signal type is treated as a generic signal |
-| 5 | `ExpiryScanner` | Without it, expired Stage 1 positions accumulate in SQLite and inflate the concentration check in `RiskManagerAgent` over time |
+| Priority | Item | Why blocking | Status |
+|---|---|---|---|
+| ~~1~~ | ~~`RiskManagerAgent`~~ | ~~`run()` raises `NotImplementedError` — pipeline crashes on every cycle~~ | ✅ Done |
+| ~~2~~ | ~~`ConfidenceScorer` wiring in `SignalGeneratorAgent`~~ | ~~`_build_signal()` never calls `apply_gate()`; every signal leaves with `passed_confidence_gate=False`~~ | ✅ Done |
+| 3 | Cron scheduler wiring in `main.py` | `EarningsCalendarAgent` is never triggered; EARN_PRE events never enter the pipeline | TODO |
+| 4 | `SignalGeneratorAgent` EARN_\* logic | EARN_PRE position sizing and Stage 1 persistence; EARN_BEAT/MISS confirm/reverse; without this the highest-value signal type is treated as a generic signal | TODO |
+| 5 | `ExpiryScanner` | Without it, expired Stage 1 positions accumulate in SQLite and inflate the concentration check in `RiskManagerAgent` over time | TODO |
 
-Items 1–3 unblock end-to-end paper trading for non-earnings event types (MA, guidance,
-analyst ratings, macro). Items 4–5 complete the earnings two-stage flow.
+Items 1–2 are done — the pipeline runs end-to-end for non-earnings event types (MA,
+guidance, analyst ratings, macro). Item 3 unblocks EARN_PRE events. Items 4–5 complete
+the earnings two-stage flow.
 
 **Next implementation sequence:**
-1. `RiskManagerAgent` — five-layer fail-fast risk checks (see `docs/architecture/event-driven-signal-layer.md §7`).
-2. `ConfidenceScorer` wiring in `SignalGeneratorAgent` — inject `ConfidenceScorer` at construction; call `scorer.score()` + `scorer.apply_gate()` at the end of `_build_signal()` for all event types. Requires `ConfidenceScorer` and `Stage1Repository` added to constructor. Non-EARN events work with only `sentiment` + `source` inputs; EARN_\* logic is item 4.
-3. Cron scheduler wiring in `main.py` — schedule `EarningsCalendarAgent` at 07:00 ET Mon–Fri and `ExpiryScanner` on the same cadence.
-4. `SignalGeneratorAgent` EARN_\* two-stage logic — EARN_PRE sizing from `historical_beat_rate`, `OpenStage1Position` persistence; EARN_BEAT/MISS load + confirm/reverse (see `docs/architecture/event-driven-signal-layer.md §3`).
-5. `ExpiryScanner` — scan `Stage1Repository.load_expired()` and call `record_outcome()` for each.
+1. Cron scheduler wiring in `main.py` — schedule `EarningsCalendarAgent` at 07:00 ET Mon–Fri and `ExpiryScanner` at 07:15 ET. Use `apscheduler` (already a transitive dep). Must not block the main polling loop.
+2. `SignalGeneratorAgent` EARN_\* two-stage logic — EARN_PRE sizing from `historical_beat_rate`, `OpenStage1Position` persistence; EARN_BEAT/MISS load + confirm/reverse (see `docs/architecture/event-driven-signal-layer.md §3`). Requires `Stage1Repository` added to `SignalGeneratorAgent` constructor.
+3. `ExpiryScanner` — scan `Stage1Repository.load_expired()` and call `update_status(id, EXPIRED)` for each; log warning per position.
 
 ---
 
