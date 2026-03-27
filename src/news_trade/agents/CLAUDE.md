@@ -103,10 +103,21 @@ Prompt helpers are module-level functions: `_build_bull_prompt`, `_build_bear_pr
 
 ### What is NOT yet implemented in `SignalGeneratorAgent`
 
-The following EARN_* logic is deferred to a future PR (requires `ConfidenceScorer` and
-`Stage1Repository` injection):
-- `EARN_PRE` — size from `historical_beat_rate`, persist `OpenStage1Position`
-- `EARN_BEAT/MISS` — load open Stage 1 position, confirm/reverse
+**Deployment blocker — `ConfidenceScorer` not wired (affects ALL event types):**
+
+`_build_signal()` returns a `TradeSignal` with `passed_confidence_gate=False` (the Pydantic
+default). `ConfidenceScorer.apply_gate()` is never called. Because `RiskManagerAgent` layer
+1 rejects any signal with `passed_confidence_gate=False`, **no signal will ever reach
+`ExecutionAgent`** once the risk manager is implemented — even for non-earnings events.
+
+Fix requires:
+- Add `ConfidenceScorer` and `Stage1Repository` to the constructor
+- At the end of `_build_signal()`, call `scorer.score(event_type, sentiment=sentiment, source=source)` then `scorer.apply_gate(signal, event_type, score)` for all event types
+- Non-EARN events work with only `sentiment` + `source`; no structural change needed
+
+**EARN_\* two-stage logic (also requires `ConfidenceScorer` + `Stage1Repository`):**
+- `EARN_PRE` — size from `historical_beat_rate` via `Stage1Repository.load_historical_outcomes()`; persist `OpenStage1Position`
+- `EARN_BEAT/MISS` — load open Stage 1 position; confirm (add) or reverse; call `Stage1Repository.update_status()`
 - `EARN_MIXED` — emit EXIT signal (ConfidenceScorer gate 1.01 always fails — by design)
 
 See `docs/architecture/event-driven-signal-layer.md §3` for the full decision tree.
@@ -124,6 +135,9 @@ Five check layers (fail-fast, in order):
 
 Inject `stage1_repo.load_all_open()` for the concentration check.
 See `docs/architecture/event-driven-signal-layer.md §7`.
+
+**Deployment note:** Layer 1 (`passed_confidence_gate`) means `RiskManagerAgent` is only
+useful once `ConfidenceScorer` is wired into `SignalGeneratorAgent`. Implement both together.
 
 ### `ExecutionAgent` — Done
 
@@ -172,3 +186,40 @@ Use `get_calendar_provider(settings)` from `providers/__init__.py` to obtain the
 primary provider. Always pass `YFinanceCalendarProvider()` as the fallback.
 
 See `docs/architecture/event-driven-signal-layer.md §6` for the full specification.
+
+---
+
+### `ExpiryScanner` — TODO
+
+Runs alongside `EarningsCalendarAgent` on the same daily cron. Responsibilities:
+
+1. Call `Stage1Repository.load_expired()` — returns all OPEN positions whose
+   `expected_report_date < today`.
+2. For each expired position, call `Stage1Repository.record_outcome(stage1_id, final_status=EXPIRED, eps_pct=None, price_1d=None)`.
+3. Log a warning per expired position for audit trail.
+
+Constructor receives: `Stage1Repository`, `Settings`, `EventBus`.
+No network calls. No LLM calls. Pure DB read + write.
+
+Without `ExpiryScanner`, expired Stage 1 positions are never closed. After a few earnings
+cycles the `stage1_positions` table accumulates stale OPEN rows, causing
+`RiskManagerAgent`'s concentration check (`load_all_open()`) to over-count open positions
+and progressively block new signals.
+
+---
+
+### Cron scheduler wiring (`main.py`) — TODO
+
+`main.py` currently runs only the LangGraph pipeline in a polling loop.
+`EarningsCalendarAgent` and `ExpiryScanner` must be scheduled independently.
+
+Minimum wiring:
+```python
+# Once per day at market open (07:00 ET Mon–Fri)
+await earnings_calendar_agent.run({})
+await expiry_scanner.run({})
+```
+
+Options: `apscheduler` (already available as a transitive dependency via LangGraph),
+`asyncio` task with a daily sleep, or an external cron triggering `uv run` directly.
+The chosen approach must not block the main polling loop.
