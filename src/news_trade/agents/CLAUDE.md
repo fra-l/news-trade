@@ -152,15 +152,21 @@ models, and upserts every order to `OrderRow` via the injected `Session`.
 
 | Method | Purpose |
 |---|---|
-| `run(state)` | Iterates `approved_signals`, calls `_submit_order()` per signal, logs each result |
+| `run(state)` | Iterates `approved_signals`, calls `_submit_order()` per signal, computes `close_after_date` from `signal.horizon_days`, logs each result |
 | `_submit_order(signal, portfolio)` | Builds `MarketOrderRequest`, calls Alpaca, returns `Order` |
 | `_sync_order_status(order)` | Polls Alpaca for updated status; updates `filled_qty`, `filled_avg_price` |
 | `_cancel_order(order)` | Cancels order on Alpaca; returns updated `Order` with `CANCELLED` status |
-| `_log_order(order)` | Upserts `OrderRow` to SQLite; no-op if `session=None` |
+| `_log_order(order, close_after_date)` | Upserts `OrderRow` to SQLite; stores `close_after_date` on insert; upsert leaves it unchanged; no-op if `session=None` |
+| `scan_expired_pead(state)` | **Cron method** — queries `OrderRow` for filled rows whose `close_after_date <= today`, calls `TradingClient.close_position(ticker)` per row, sets `status="pead_closed"` on success |
 
 Module-level helpers: `_signal_to_order_side()` (maps direction + portfolio → `OrderSide`),
 `_alpaca_to_order()` (maps alpaca-py `Order` → internal `Order`; unknown statuses fall back
 to `SUBMITTED`).
+
+`scan_expired_pead()` is APScheduler-compatible (`async def run(state: dict) -> dict` signature).
+It is wired as the `pead_expiry_scanner` cron job at **09:45 ET Mon–Fri** in `main.py`,
+using a dedicated `ExecutionAgent` instance (`pead_exec_agent`) with its own Alpaca client
+and cron session — independent of the pipeline's `ExecutionAgent`.
 
 ---
 
@@ -217,14 +223,18 @@ yet so publishing is omitted. The WARNING log serves as the audit trail.
 
 ### Cron scheduler wiring (`main.py`) ✅ Done
 
-`main.py` uses `APScheduler` (`AsyncIOScheduler`) to run both cron agents without blocking
+`main.py` uses `APScheduler` (`AsyncIOScheduler`) to run all cron agents without blocking
 the main polling loop:
 
 ```
-EarningsCalendarAgent  — cron, hour=7, minute=0,  day_of_week="mon-fri", misfire_grace_time=300
-ExpiryScanner          — cron, hour=7, minute=15, day_of_week="mon-fri", misfire_grace_time=300
+EarningsCalendarAgent        — cron, hour=7, minute=0,  day_of_week="mon-fri", misfire_grace_time=300
+ExpiryScanner                — cron, hour=7, minute=15, day_of_week="mon-fri", misfire_grace_time=300
+ExecutionAgent.scan_expired_pead — cron, hour=9, minute=45, day_of_week="mon-fri", misfire_grace_time=300
 ```
 
-Both agents share a dedicated DB engine + session (separate from the pipeline's session).
+`EarningsCalendarAgent` and `ExpiryScanner` share a dedicated `cron_engine` / `cron_session`.
+`scan_expired_pead` runs on a dedicated `pead_exec_agent` (`ExecutionAgent`) with its own
+`cron_alpaca` (`TradingClient`) and the same `cron_session`. All three share the same
+`Stage1Repository` (via `cron_stage1_repo`).
 `scheduler.start()` is called before the `while True` loop; `scheduler.shutdown(wait=False)`
 runs in the `finally` block alongside `event_bus.close()`.

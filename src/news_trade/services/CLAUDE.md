@@ -117,7 +117,11 @@ calls `Base.metadata.create_all()` — no Alembic, safe to call on every startup
 | `trade_signals` | Integer autoincrement | `signal_id` (String) is the business key |
 | `stage1_positions` | **String (UUID)** | UUID set in application code before insert |
 | `earnings_outcomes` | Integer autoincrement | `stage1_id` has `unique=True` for idempotency |
-| `orders` | Integer autoincrement | `order_id` is the business key |
+| `orders` | Integer autoincrement | `order_id` is the business key; `close_after_date` nullable Date column drives PEAD expiry |
+
+`OrderRow.close_after_date` (nullable `Date`, indexed) is set at insert time by
+`ExecutionAgent._log_order()` when the signal carries `horizon_days`. Upserts leave the
+column unchanged. `ExecutionAgent.scan_expired_pead()` queries this column daily.
 
 `stage1_positions` is the only table with a non-integer primary key. This is intentional —
 the UUID is generated in `OpenStage1Position` before the row is inserted, so the Pydantic
