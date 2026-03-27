@@ -14,6 +14,7 @@ from news_trade.models.calendar import EarningsCalendarEntry
 from news_trade.models.events import NewsEvent
 from news_trade.models.market import MarketSnapshot
 from news_trade.models.sentiment import SentimentResult
+from news_trade.models.surprise import EstimatesData
 
 
 @runtime_checkable
@@ -72,9 +73,19 @@ class SentimentProvider(Protocol):
         ...
 
     async def analyse_batch(
-        self, events: list[NewsEvent]
+        self,
+        events: list[NewsEvent],
+        estimates: dict[str, EstimatesData] | None = None,
     ) -> list[SentimentResult]:
-        """Score multiple events (may batch into fewer API calls)."""
+        """Score multiple events (may batch into fewer API calls).
+
+        Args:
+            events: News events to score.
+            estimates: Optional mapping of ticker → pre-announcement consensus
+                       estimates. When provided and the event is EARN_PRE,
+                       providers may inject the estimates narrative into the
+                       prompt for richer context.
+        """
         ...
 
 

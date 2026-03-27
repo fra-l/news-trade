@@ -13,7 +13,11 @@ from datetime import UTC, date, datetime
 
 from news_trade.models.events import NewsEvent
 from news_trade.models.sentiment import SentimentLabel, SentimentResult
+from news_trade.models.surprise import EstimatesData
+from news_trade.services.estimates_renderer import EstimatesRenderer
 from news_trade.services.llm_client import LLMClient, LLMClientFactory
+
+_renderer = EstimatesRenderer()
 
 _logger = logging.getLogger(__name__)
 
@@ -23,8 +27,10 @@ and return a JSON object for EACH ticker mentioned in the event.
 
 Return a JSON array where each element has these exact keys:
   ticker        (string)  — the stock symbol
-  label         (string)  — one of: VERY_BULLISH, BULLISH, NEUTRAL, BEARISH, VERY_BEARISH
-  score         (float)   — sentiment score from -1.0 (very bearish) to +1.0 (very bullish)
+  label         (string)  — one of: VERY_BULLISH, BULLISH, NEUTRAL,
+                            BEARISH, VERY_BEARISH
+  score         (float)   — sentiment score -1.0 (very bearish) to
+                            +1.0 (very bullish)
   confidence    (float)   — confidence from 0.0 to 1.0
   reasoning     (string)  — one-sentence explanation
 
@@ -44,10 +50,12 @@ Assess sentiment based on:
 
 Return a JSON array where each element has these exact keys:
   ticker        (string)  — the stock symbol
-  label         (string)  — one of: VERY_BULLISH, BULLISH, NEUTRAL, BEARISH, VERY_BEARISH
-  score         (float)   — sentiment score from -1.0 (very bearish) to +1.0 (very bullish)
+  label         (string)  — one of: VERY_BULLISH, BULLISH, NEUTRAL,
+                            BEARISH, VERY_BEARISH
+  score         (float)   — sentiment score -1.0 (very bearish) to
+                            +1.0 (very bullish)
   confidence    (float)   — confidence from 0.0 to 1.0
-  reasoning     (string)  — one-sentence explanation citing the specific signal
+  reasoning     (string)  — one-sentence explanation citing the signal
 
 Return ONLY the JSON array with no surrounding text or markdown fences.
 """
@@ -117,8 +125,19 @@ class ClaudeSentimentProvider:
             return results[0]
         return _neutral_result(event, self._llm.model_id, self._llm.provider)
 
-    async def analyse_batch(self, events: list[NewsEvent]) -> list[SentimentResult]:
-        """Score multiple events, respecting the daily budget cap."""
+    async def analyse_batch(
+        self,
+        events: list[NewsEvent],
+        estimates: dict[str, EstimatesData] | None = None,
+    ) -> list[SentimentResult]:
+        """Score multiple events, respecting the daily budget cap.
+
+        Args:
+            events: News events to score.
+            estimates: Optional ticker → EstimatesData mapping. When provided,
+                       EARN_PRE events receive an analyst estimates block in the
+                       prompt for richer pre-announcement context.
+        """
         self._reset_budget_if_new_day()
         all_results: list[SentimentResult] = []
         for event in events:
@@ -132,11 +151,15 @@ class ClaudeSentimentProvider:
                     _neutral_result(event, self._llm.model_id, self._llm.provider)
                 )
                 continue
-            results = await self._call_claude(event)
+            results = await self._call_claude(event, estimates)
             all_results.extend(results)
         return all_results
 
-    async def _call_claude(self, event: NewsEvent) -> list[SentimentResult]:
+    async def _call_claude(
+        self,
+        event: NewsEvent,
+        estimates: dict[str, EstimatesData] | None,
+    ) -> list[SentimentResult]:
         client = self._select_client(event)
 
         # Select system prompt based on event type
@@ -154,6 +177,17 @@ class ClaudeSentimentProvider:
             f"Tickers: {tickers_str}\n"
             f"Event type: {event.event_type}"
         )
+
+        # For EARN_PRE events, append the analyst estimates narrative when available.
+        # This gives the model pre-computed context (EPS consensus, dispersion, beat
+        # rate) rather than asking it to infer from the headline alone.
+        if event_type_str == "earn_pre" and estimates:
+            ticker = event.tickers[0] if event.tickers else ""
+            if ticker and ticker in estimates:
+                estimates_block = _renderer.render(ticker, estimates[ticker])
+                user_message = (
+                    f"{user_message}\n\nAnalyst Estimates:\n{estimates_block}"
+                )
 
         try:
             response = await client.invoke(user_message, system=system_prompt)

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from news_trade.agents.earnings_calendar import (
     EarningsCalendarAgent,
+    _build_estimates,
     _make_event_id,
     _synthesise_event,
 )
@@ -388,3 +389,141 @@ class TestEarningsCalendarAgentWindowFiltering:
         )
         result = await agent.run({})
         assert result["news_events"] == []
+
+
+# ---------------------------------------------------------------------------
+# TestBuildEstimates
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEstimates:
+    """Unit tests for the _build_estimates() module-level helper."""
+
+    def test_returns_none_when_no_eps_estimate(self) -> None:
+        entry = _make_entry(eps_estimate=None)
+        assert _build_estimates(entry) is None
+
+    def test_returns_estimates_data_when_eps_available(self) -> None:
+        from news_trade.models.surprise import EstimatesData
+
+        entry = _make_entry(ticker="AAPL", eps_estimate=2.50)
+        result = _build_estimates(entry)
+        assert isinstance(result, EstimatesData)
+
+    def test_eps_estimate_value_preserved(self) -> None:
+        entry = _make_entry(eps_estimate=3.14)
+        result = _build_estimates(entry)
+        assert result is not None
+        assert result.eps_estimate == 3.14
+
+    def test_eps_low_and_high_equal_estimate(self) -> None:
+        entry = _make_entry(eps_estimate=1.80)
+        result = _build_estimates(entry)
+        assert result is not None
+        assert result.eps_low == 1.80
+        assert result.eps_high == 1.80
+
+    def test_fiscal_period_from_fiscal_quarter(self) -> None:
+        entry = _make_entry(fiscal_quarter="Q2 2026")
+        result = _build_estimates(entry)
+        assert result is not None
+        assert result.fiscal_period == "Q2 2026"
+
+    def test_report_date_preserved(self) -> None:
+        rd = date.today() + timedelta(days=3)
+        entry = _make_entry(report_date=rd)
+        result = _build_estimates(entry)
+        assert result is not None
+        assert result.report_date == rd
+
+    def test_optional_fields_are_none(self) -> None:
+        entry = _make_entry(eps_estimate=1.00)
+        result = _build_estimates(entry)
+        assert result is not None
+        assert result.historical_beat_rate is None
+        assert result.mean_eps_surprise is None
+        assert result.eps_trailing_mean is None
+
+
+# ---------------------------------------------------------------------------
+# TestEarningsCalendarAgentEstimatesState
+# ---------------------------------------------------------------------------
+
+
+class TestEarningsCalendarAgentEstimatesState:
+    """Verify EarningsCalendarAgent populates estimates in returned state."""
+
+    def setup_method(self) -> None:
+        self.engine = _make_engine()
+        self.settings = _make_settings()
+        self.event_bus = AsyncMock()
+        self.event_bus.publish = AsyncMock()
+
+    async def test_estimates_populated_for_entries_with_eps(self) -> None:
+        entry = _make_entry(ticker="AAPL", eps_estimate=2.50)
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(return_value=[entry])
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
+
+        agent = EarningsCalendarAgent(
+            self.settings, self.event_bus, primary, fallback, self.engine
+        )
+        result = await agent.run({})
+        assert "AAPL" in result["estimates"]
+        assert result["estimates"]["AAPL"].eps_estimate == 2.50
+
+    async def test_estimates_empty_for_entries_without_eps(self) -> None:
+        entry = _make_entry(ticker="AAPL", eps_estimate=None)
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(return_value=[entry])
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
+
+        agent = EarningsCalendarAgent(
+            self.settings, self.event_bus, primary, fallback, self.engine
+        )
+        result = await agent.run({})
+        assert result["estimates"] == {}
+
+    async def test_estimates_populated_even_when_event_is_duplicate(self) -> None:
+        """Estimates in state even if the EARN_PRE event was already ingested."""
+        from news_trade.models.events import EventType
+
+        entry = _make_entry(ticker="AAPL", eps_estimate=1.55)
+        event_id = _make_event_id(entry)
+
+        # Pre-seed the database so the event is a duplicate
+        with Session(self.engine) as s:
+            from news_trade.services.tables import NewsEventRow
+
+            s.add(NewsEventRow(
+                event_id=event_id,
+                headline="pre-existing",
+                summary="",
+                source="earnings_calendar",
+                url="",
+                event_type=EventType.EARN_PRE,
+                published_at=date.today(),
+            ))
+            s.commit()
+
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(return_value=[entry])
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
+
+        agent = EarningsCalendarAgent(
+            self.settings, self.event_bus, primary, fallback, self.engine
+        )
+        result = await agent.run({})
+        # Event is deduped (not published), but estimates should still be available
+        assert result["news_events"] == []
+        assert "AAPL" in result["estimates"]
+        assert result["estimates"]["AAPL"].eps_estimate == 1.55
