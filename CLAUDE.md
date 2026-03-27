@@ -243,7 +243,10 @@ bypasses the confidence gate. `ExpiryScanner` marks stale OPEN positions EXPIRED
 | ~~5~~ | ~~`ExpiryScanner`~~ | ~~Without it, expired Stage 1 positions accumulate in SQLite and inflate the concentration check in `RiskManagerAgent` over time~~ | ✅ Done |
 
 All deployment blockers are resolved. The system can run paper trading end-to-end across
-all event types including the full earnings two-stage flow.
+all event types including the full earnings two-stage flow. `FMPEstimatesProvider` gives
+every ticker a calibrated historical beat rate from day one so EARN_PRE sizing never
+relies solely on the static 0.65 default; once ≥4 own quarters are observed the
+`Stage1Repository` data takes over.
 
 **Remaining work (non-blocking enhancements):**
 - PEAD horizon expiry in `ExecutionAgent` — auto-close Stage 2 positions after `horizon_days`
