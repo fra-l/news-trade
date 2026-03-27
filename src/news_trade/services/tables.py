@@ -152,4 +152,10 @@ class OrderRow(Base):
     filled_avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     filled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    close_after_date: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+        index=True,
+        doc="Auto-close date for PEAD positions; None for non-PEAD orders",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -183,6 +183,15 @@ class Settings(BaseSettings):
         description="Only debate signals whose confidence_score exceeds this value",
     )
 
+    # --- PEAD horizon ---
+    pead_horizon_days: int = Field(
+        default=5,
+        description=(
+            "Calendar days after an EARN_BEAT/MISS order fill before the position "
+            "is auto-closed by the daily PEAD expiry cron"
+        ),
+    )
+
     # --- Risk manager ---
     max_open_positions: int = Field(
         default=5,

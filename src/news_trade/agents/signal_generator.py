@@ -459,6 +459,7 @@ class SignalGeneratorAgent(BaseAgent):
             stop_loss=stop_loss,
             take_profit=None,
             stage1_id=stage1_id,
+            horizon_days=self.settings.pead_horizon_days,
             rationale=sentiment.reasoning,
             model_id=self._llm.quick.model_id,
             provider=self._llm.quick.provider,

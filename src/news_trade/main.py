@@ -6,9 +6,11 @@ import asyncio
 import logging
 import sys
 
+from alpaca.trading.client import TradingClient
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from news_trade.agents.earnings_calendar import EarningsCalendarAgent
+from news_trade.agents.execution import ExecutionAgent
 from news_trade.agents.expiry_scanner import ExpiryScanner
 from news_trade.config import get_settings
 from news_trade.graph.pipeline import build_pipeline
@@ -71,6 +73,18 @@ async def main() -> None:
     )
     expiry_scanner = ExpiryScanner(settings, event_bus, stage1_repo=cron_stage1_repo)
 
+    cron_alpaca = TradingClient(
+        api_key=settings.alpaca_api_key,
+        secret_key=settings.alpaca_secret_key,
+        paper=True,
+    )
+    pead_exec_agent = ExecutionAgent(
+        settings,
+        event_bus,
+        alpaca_client=cron_alpaca,
+        session=cron_session,
+    )
+
     scheduler = AsyncIOScheduler(timezone="America/New_York")
     scheduler.add_job(
         earnings_agent.run,
@@ -92,9 +106,20 @@ async def main() -> None:
         misfire_grace_time=_MISFIRE_GRACE_SECS,
         id="expiry_scanner",
     )
+    scheduler.add_job(
+        pead_exec_agent.scan_expired_pead,
+        "cron",
+        args=[{}],
+        hour=9,
+        minute=45,
+        day_of_week="mon-fri",
+        misfire_grace_time=_MISFIRE_GRACE_SECS,
+        id="pead_expiry_scanner",
+    )
     scheduler.start()
     logger.info(
-        "Cron scheduler started (earnings_calendar=07:00 ET, expiry_scanner=07:15 ET)"
+        "Cron scheduler started (earnings_calendar=07:00 ET, expiry_scanner=07:15 ET, "
+        "pead_expiry_scanner=09:45 ET)"
     )
 
     logger.info(

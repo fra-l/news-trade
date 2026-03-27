@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import date, timedelta
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide as AlpacaOrderSide
@@ -42,7 +43,7 @@ class ExecutionAgent(BaseAgent):
         self._alpaca = alpaca_client
         self._session = session
 
-    async def run(self, state: dict) -> dict:
+    async def run(self, state: dict) -> dict:  # type: ignore[type-arg]
         """Execute approved trade signals.
 
         Returns:
@@ -56,7 +57,12 @@ class ExecutionAgent(BaseAgent):
         for signal in approved_signals:
             try:
                 order = await self._submit_order(signal, portfolio)
-                self._log_order(order)
+                close_after = (
+                    date.today() + timedelta(days=signal.horizon_days)
+                    if signal.horizon_days
+                    else None
+                )
+                self._log_order(order, close_after_date=close_after)
                 orders.append(order)
             except Exception as exc:
                 self.logger.error(
@@ -93,7 +99,7 @@ class ExecutionAgent(BaseAgent):
             side=AlpacaOrderSide(side.value),
             time_in_force=TimeInForce.DAY,
         )
-        # alpaca-py stubs submit_order as returning Order | dict; annotation is conservative
+        # alpaca-py stubs submit_order as Order | dict; annotation is conservative
         alpaca_order: AlpacaOrder = await asyncio.to_thread(
             self._alpaca.submit_order,  # type: ignore[arg-type]
             request,
@@ -104,7 +110,7 @@ class ExecutionAgent(BaseAgent):
         """Poll Alpaca for the latest status of a submitted order."""
         if self._alpaca is None or order.broker_order_id is None:
             return order
-        # alpaca-py stubs get_order_by_id as returning Order | dict; annotation is conservative
+        # alpaca-py stubs get_order_by_id as Order | dict; annotation is conservative
         alpaca_order: AlpacaOrder = await asyncio.to_thread(
             self._alpaca.get_order_by_id,  # type: ignore[arg-type]
             order.broker_order_id,
@@ -131,7 +137,9 @@ class ExecutionAgent(BaseAgent):
         )
         return order.model_copy(update={"status": OrderStatus.CANCELLED})
 
-    def _log_order(self, order: Order) -> None:
+    def _log_order(
+        self, order: Order, close_after_date: date | None = None
+    ) -> None:
         """Persist the order to the SQLite database."""
         if self._session is None:
             return
@@ -154,6 +162,7 @@ class ExecutionAgent(BaseAgent):
                 filled_avg_price=order.filled_avg_price,
                 submitted_at=order.submitted_at,
                 filled_at=order.filled_at,
+                close_after_date=close_after_date,
             )
             self._session.add(row)
         else:
@@ -162,7 +171,58 @@ class ExecutionAgent(BaseAgent):
             existing.filled_avg_price = order.filled_avg_price
             existing.filled_at = order.filled_at
             existing.broker_order_id = order.broker_order_id
+            # close_after_date is intentionally left unchanged on upsert
         self._session.commit()
+
+    async def scan_expired_pead(self, state: dict) -> dict:  # type: ignore[type-arg]
+        """Daily cron: close Stage 2 PEAD positions past their horizon_days.
+
+        Queries OrderRow for filled orders whose ``close_after_date`` has passed,
+        then calls ``TradingClient.close_position()`` on each ticker via
+        ``asyncio.to_thread`` to keep the event loop unblocked.
+
+        Returns:
+            ``{"errors": [...]}`` — empty list on full success.
+        """
+        if self._session is None or self._alpaca is None:
+            return {"errors": []}
+
+        today = date.today()
+        expired: list[OrderRow] = (
+            self._session.query(OrderRow)
+            .filter(
+                OrderRow.close_after_date.isnot(None),
+                OrderRow.close_after_date <= today,
+                OrderRow.status.in_(["filled", "submitted", "partially_filled"]),
+            )
+            .all()
+        )
+
+        errors: list[str] = []
+        for row in expired:
+            try:
+                await asyncio.to_thread(
+                    self._alpaca.close_position,
+                    row.ticker,
+                )
+                row.status = "pead_closed"
+                self._session.commit()
+                self.logger.info(
+                    "PEAD horizon expired: closed %s (order_id=%s, was due %s)",
+                    row.ticker,
+                    row.order_id,
+                    row.close_after_date,
+                )
+            except Exception as exc:
+                self.logger.error(
+                    "PEAD close failed for %s (order_id=%s): %s",
+                    row.ticker,
+                    row.order_id,
+                    exc,
+                )
+                errors.append(f"pead_close:{row.order_id}:{exc}")
+
+        return {"errors": errors}
 
 
 def _signal_to_order_side(
