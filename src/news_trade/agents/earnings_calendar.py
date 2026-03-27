@@ -18,6 +18,7 @@ from news_trade.agents.base import BaseAgent
 from news_trade.config import Settings
 from news_trade.models.calendar import EarningsCalendarEntry
 from news_trade.models.events import EventType, NewsEvent
+from news_trade.models.surprise import EstimatesData
 from news_trade.providers.base import CalendarProvider
 from news_trade.services.event_bus import EventBus
 from news_trade.services.tables import Base, NewsEventRow
@@ -71,7 +72,15 @@ class EarningsCalendarAgent(BaseAgent):
         )
 
         published: list[NewsEvent] = []
+        estimates: dict[str, EstimatesData] = {}
         errors: list[str] = list(state.get("errors") or [])
+
+        # Build estimates from all actionable entries (regardless of dedup status)
+        # so SentimentAnalystAgent always has estimates context when available.
+        for entry in actionable:
+            est = _build_estimates(entry)
+            if est is not None:
+                estimates[entry.ticker] = est
 
         with Session(self._engine) as session:
             for entry in actionable:
@@ -95,7 +104,7 @@ class EarningsCalendarAgent(BaseAgent):
         self.logger.info(
             "EarningsCalendarAgent: published %d EARN_PRE events", len(published)
         )
-        return {"news_events": published, "errors": errors}
+        return {"news_events": published, "estimates": estimates, "errors": errors}
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -171,6 +180,31 @@ class EarningsCalendarAgent(BaseAgent):
 def _make_event_id(entry: EarningsCalendarEntry) -> str:
     """Build a stable, dedup-friendly event_id for a calendar entry."""
     return f"calendar_earn_pre_{entry.ticker}_{entry.report_date}"
+
+
+def _build_estimates(entry: EarningsCalendarEntry) -> EstimatesData | None:
+    """Build a minimal EstimatesData from a calendar entry.
+
+    Returns None when no EPS estimate is available (e.g. yfinance fallback).
+    Revenue fields default to 0.0 and analyst count to 0 because the calendar
+    endpoint does not provide them; they render as placeholder values in the
+    EstimatesRenderer narrative so the LLM knows they are absent.
+    """
+    if entry.eps_estimate is None:
+        return None
+    eps = entry.eps_estimate
+    return EstimatesData(
+        ticker=entry.ticker,
+        fiscal_period=entry.fiscal_quarter,
+        report_date=entry.report_date,
+        eps_estimate=eps,
+        eps_low=eps,
+        eps_high=eps,
+        revenue_estimate=0.0,
+        revenue_low=0.0,
+        revenue_high=0.0,
+        num_analysts=0,
+    )
 
 
 def _synthesise_event(entry: EarningsCalendarEntry) -> NewsEvent:

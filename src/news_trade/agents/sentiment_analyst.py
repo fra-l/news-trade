@@ -1,6 +1,8 @@
-"""SentimentAnalystAgent — classifies news sentiment via an injected SentimentProvider."""
+"""SentimentAnalystAgent — classifies news via an injected SentimentProvider."""
 
 from __future__ import annotations
+
+from typing import Any
 
 from news_trade.agents.base import BaseAgent
 from news_trade.providers.base import SentimentProvider
@@ -43,9 +45,13 @@ class SentimentAnalystAgent(BaseAgent):
             self.logger.debug("All events filtered out by keyword pre-filter")
             return {"sentiment_results": []}
 
+        estimates: dict[str, Any] | None = state.get("estimates")
+
         try:
-            results = await self._provider.analyse_batch(news_events)
-        except Exception as exc:  # noqa: BLE001
+            results = await self._provider.analyse_batch(
+                news_events, estimates=estimates
+            )
+        except Exception as exc:
             self.logger.error("Sentiment analysis failed: %s", exc)
             existing = state.get("errors") or []
             return {"sentiment_results": [], "errors": [*existing, str(exc)]}

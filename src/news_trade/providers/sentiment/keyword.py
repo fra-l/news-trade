@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from news_trade.models.events import NewsEvent
 from news_trade.models.sentiment import SentimentLabel, SentimentResult
+from news_trade.models.surprise import EstimatesData
 
 # (keyword, weight) pairs — weight > 0 is bullish, < 0 is bearish
 _KEYWORD_WEIGHTS: list[tuple[str, float]] = [
@@ -88,7 +89,11 @@ class KeywordSentimentProvider:
     async def analyse(self, event: NewsEvent) -> SentimentResult:
         return (await self.analyse_batch([event]))[0]
 
-    async def analyse_batch(self, events: list[NewsEvent]) -> list[SentimentResult]:
+    async def analyse_batch(
+        self,
+        events: list[NewsEvent],
+        estimates: dict[str, EstimatesData] | None = None,
+    ) -> list[SentimentResult]:
         results: list[SentimentResult] = []
         for event in events:
             text = event.headline + " " + event.summary

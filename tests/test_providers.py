@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,16 +14,19 @@ from news_trade.config import (
     Settings,
 )
 from news_trade.models.events import EventType, NewsEvent
-from news_trade.models.market import MarketSnapshot, OHLCVBar
-from news_trade.models.sentiment import SentimentLabel, SentimentResult
+from news_trade.models.sentiment import SentimentLabel
 from news_trade.providers import (
     get_market_data_provider,
     get_news_provider,
     get_sentiment_provider,
 )
-from news_trade.providers.base import MarketDataProvider, NewsProvider, SentimentProvider
+from news_trade.providers.base import (
+    MarketDataProvider,
+    NewsProvider,
+    SentimentProvider,
+)
 
-NOW = datetime(2026, 3, 2, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 3, 2, 12, 0, 0, tzinfo=UTC)
 
 
 def _make_settings(**kwargs) -> Settings:
@@ -180,10 +182,9 @@ class TestKeywordSentimentProvider:
         results = await provider.analyse_batch(events)
         assert len(results) == 3
 
-    def test_confidence_is_fixed(self, provider):
-        import asyncio
+    async def test_confidence_is_fixed(self, provider):
         event = _make_event()
-        result = asyncio.run(provider.analyse(event))
+        result = await provider.analyse(event)
         assert result.confidence == 0.4
 
 
@@ -405,3 +406,81 @@ class TestClaudeProviderModelIdProvenance:
         event = _make_event_with_type(EventType.EARN_PRE)
         result = await provider.analyse(event)
         assert result.model_id == "claude-sonnet-4-6"
+
+
+# ---------------------------------------------------------------------------
+# ClaudeSentimentProvider — Phase 2: estimates injection into EARN_PRE prompt
+# ---------------------------------------------------------------------------
+
+
+def _make_estimates(ticker: str = "AAPL"):
+    from datetime import date
+
+    from news_trade.models.surprise import EstimatesData
+
+    return EstimatesData(
+        ticker=ticker,
+        fiscal_period="Q1 2026",
+        report_date=date(2026, 4, 25),
+        eps_estimate=2.50,
+        eps_low=2.50,
+        eps_high=2.50,
+        revenue_estimate=0.0,
+        revenue_low=0.0,
+        revenue_high=0.0,
+        num_analysts=0,
+    )
+
+
+class TestEstimatesInjectionPhase2:
+    """Verify EstimatesRenderer output is injected into EARN_PRE prompts."""
+
+    async def test_earn_pre_with_estimates_appends_renderer_block(self):
+        """EARN_PRE + matching ticker → user message contains estimates block."""
+        provider, _mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.EARN_PRE, ticker="AAPL")
+        estimates = {"AAPL": _make_estimates("AAPL")}
+        await provider.analyse_batch([event], estimates=estimates)
+        call_args, _ = mock_deep.invoke.call_args
+        user_message = call_args[0]
+        assert "EARNINGS ESTIMATES" in user_message
+        assert "2.50" in user_message  # eps_estimate rendered
+
+    async def test_earn_pre_without_estimates_sends_headline_only(self):
+        """EARN_PRE without estimates dict → headline-only (no regression)."""
+        provider, _mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.EARN_PRE, ticker="AAPL")
+        await provider.analyse_batch([event], estimates=None)
+        call_args, _ = mock_deep.invoke.call_args
+        user_message = call_args[0]
+        assert "EARNINGS ESTIMATES" not in user_message
+
+    async def test_earn_pre_ticker_not_in_estimates_sends_headline_only(self):
+        """EARN_PRE with estimates dict that lacks the ticker → no injection."""
+        provider, _mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.EARN_PRE, ticker="AAPL")
+        estimates = {"MSFT": _make_estimates("MSFT")}  # different ticker
+        await provider.analyse_batch([event], estimates=estimates)
+        call_args, _ = mock_deep.invoke.call_args
+        user_message = call_args[0]
+        assert "EARNINGS ESTIMATES" not in user_message
+
+    async def test_non_earn_pre_ignores_estimates(self):
+        """Non-EARN_PRE event with estimates provided → no estimates block."""
+        provider, mock_quick, _mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.MA_TARGET, ticker="AAPL")
+        estimates = {"AAPL": _make_estimates("AAPL")}
+        await provider.analyse_batch([event], estimates=estimates)
+        call_args, _ = mock_quick.invoke.call_args
+        user_message = call_args[0]
+        assert "EARNINGS ESTIMATES" not in user_message
+
+    async def test_earn_beat_ignores_estimates(self):
+        """EARN_BEAT (post-announcement) + estimates → no estimates block injected."""
+        provider, _mock_quick, mock_deep = _make_provider()
+        event = _make_event_with_type(EventType.EARN_BEAT, ticker="AAPL")
+        estimates = {"AAPL": _make_estimates("AAPL")}
+        await provider.analyse_batch([event], estimates=estimates)
+        call_args, _ = mock_deep.invoke.call_args
+        user_message = call_args[0]
+        assert "EARNINGS ESTIMATES" not in user_message

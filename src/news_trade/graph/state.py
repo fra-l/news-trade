@@ -16,6 +16,7 @@ from news_trade.models import (
     SentimentResult,
     TradeSignal,
 )
+from news_trade.models.surprise import EstimatesData
 
 
 class PipelineState(TypedDict, total=False):
@@ -26,6 +27,9 @@ class PipelineState(TypedDict, total=False):
 
     # Input
     news_events: list[NewsEvent]
+
+    # After EarningsCalendarAgent — ticker → pre-announcement consensus estimates
+    estimates: dict[str, EstimatesData]
 
     # After MarketDataAgent enrichment
     market_context: dict[str, MarketSnapshot]  # ticker -> OHLCV / volatility snapshot
