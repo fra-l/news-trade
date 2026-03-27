@@ -95,6 +95,13 @@ class TradeSignal(BaseModel):
         default=None,
         description="Links a Stage 2 POST signal to its Stage 1 OpenStage1Position id",
     )
+    horizon_days: int | None = Field(
+        default=None,
+        description=(
+            "Calendar days until auto-close; set for PEAD signals (EARN_BEAT/MISS). "
+            "None means no scheduled expiry."
+        ),
+    )
 
     # Pattern A — debate result
     debate_result: DebateResult | None = Field(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine
@@ -217,6 +218,30 @@ class TestLogOrder:
         agent = _make_agent(session=None)
         agent._log_order(_make_order())  # must not raise
 
+    def test_close_after_date_persisted(self) -> None:
+        tomorrow = date.today() + timedelta(days=1)
+        self.agent._log_order(_make_order(), close_after_date=tomorrow)
+        row = self._session.query(OrderRow).filter_by(order_id="ord-1").first()
+        assert row is not None
+        assert row.close_after_date == tomorrow
+
+    def test_close_after_date_none_by_default(self) -> None:
+        self.agent._log_order(_make_order())
+        row = self._session.query(OrderRow).filter_by(order_id="ord-1").first()
+        assert row is not None
+        assert row.close_after_date is None
+
+    def test_upsert_preserves_close_after_date(self) -> None:
+        tomorrow = date.today() + timedelta(days=1)
+        order = _make_order()
+        self.agent._log_order(order, close_after_date=tomorrow)
+        # upsert without close_after_date should NOT overwrite the existing value
+        updated = order.model_copy(update={"status": OrderStatus.FILLED})
+        self.agent._log_order(updated)
+        row = self._session.query(OrderRow).filter_by(order_id="ord-1").first()
+        assert row is not None
+        assert row.close_after_date == tomorrow
+
 
 # ---------------------------------------------------------------------------
 # TestRunIntegration
@@ -253,3 +278,110 @@ class TestRunIntegration:
             {"approved_signals": [], "errors": ["prior-error"]}
         )
         assert "prior-error" in result["errors"]
+
+
+# ---------------------------------------------------------------------------
+# TestScanExpiredPead
+# ---------------------------------------------------------------------------
+
+
+def _make_order_row(
+    order_id: str = "ord-1",
+    ticker: str = "AAPL",
+    status: str = "filled",
+    close_after_date: date | None = None,
+    session: Session | None = None,
+) -> OrderRow:
+    row = OrderRow(
+        order_id=order_id,
+        signal_id="sig-1",
+        ticker=ticker,
+        side="buy",
+        order_type="market",
+        qty=10,
+        status=status,
+        filled_qty=10,
+        close_after_date=close_after_date,
+    )
+    if session is not None:
+        session.add(row)
+        session.commit()
+    return row
+
+
+class TestScanExpiredPead:
+    def setup_method(self) -> None:
+        self._session = _make_session()
+        self._mock_alpaca = MagicMock()
+        self.agent = _make_agent(
+            alpaca_client=self._mock_alpaca, session=self._session
+        )
+
+    async def test_no_op_when_no_expired_rows(self) -> None:
+        result = await self.agent.scan_expired_pead({})
+        assert result == {"errors": []}
+        self._mock_alpaca.close_position.assert_not_called()
+
+    async def test_no_op_when_no_alpaca_client(self) -> None:
+        agent = _make_agent(alpaca_client=None, session=self._session)
+        _make_order_row(
+            close_after_date=date.today() - timedelta(days=1),
+            session=self._session,
+        )
+        result = await agent.scan_expired_pead({})
+        assert result == {"errors": []}
+
+    async def test_closes_expired_position(self) -> None:
+        yesterday = date.today() - timedelta(days=1)
+        _make_order_row(close_after_date=yesterday, session=self._session)
+        result = await self.agent.scan_expired_pead({})
+        assert result["errors"] == []
+        self._mock_alpaca.close_position.assert_called_once_with("AAPL")
+        row = self._session.query(OrderRow).filter_by(order_id="ord-1").first()
+        assert row is not None
+        assert row.status == "pead_closed"
+
+    async def test_skips_future_rows(self) -> None:
+        tomorrow = date.today() + timedelta(days=1)
+        _make_order_row(close_after_date=tomorrow, session=self._session)
+        result = await self.agent.scan_expired_pead({})
+        assert result["errors"] == []
+        self._mock_alpaca.close_position.assert_not_called()
+
+    async def test_skips_rows_without_close_after_date(self) -> None:
+        _make_order_row(close_after_date=None, session=self._session)
+        await self.agent.scan_expired_pead({})
+        self._mock_alpaca.close_position.assert_not_called()
+
+    async def test_skips_already_closed_rows(self) -> None:
+        yesterday = date.today() - timedelta(days=1)
+        _make_order_row(
+            close_after_date=yesterday, status="pead_closed", session=self._session
+        )
+        await self.agent.scan_expired_pead({})
+        self._mock_alpaca.close_position.assert_not_called()
+
+    async def test_alpaca_error_logged_and_returned(self) -> None:
+        yesterday = date.today() - timedelta(days=1)
+        _make_order_row(close_after_date=yesterday, session=self._session)
+        self._mock_alpaca.close_position.side_effect = RuntimeError("api error")
+        result = await self.agent.scan_expired_pead({})
+        assert any("pead_close:ord-1" in e for e in result["errors"])
+        # status must not change on error
+        row = self._session.query(OrderRow).filter_by(order_id="ord-1").first()
+        assert row is not None
+        assert row.status == "filled"
+
+    async def test_closes_multiple_expired_positions(self) -> None:
+        yesterday = date.today() - timedelta(days=1)
+        _make_order_row(
+            order_id="ord-1", ticker="AAPL",
+            close_after_date=yesterday, session=self._session,
+        )
+        _make_order_row(
+            order_id="ord-2", ticker="MSFT",
+            close_after_date=yesterday, session=self._session,
+        )
+        result = await self.agent.scan_expired_pead({})
+        assert result["errors"] == []
+        assert self._mock_alpaca.close_position.call_count == 2

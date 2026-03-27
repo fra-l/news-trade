@@ -537,6 +537,14 @@ class TestHandleEarnPre:
         assert signal is not None
         assert signal.stage1_id is not None
 
+    def test_earn_pre_has_no_horizon_days(self):
+        signal = self.agent._build_signal(
+            self.sentiment, self.market,
+            {"earn-evt-1": self.event}, self.estimates,
+        )
+        assert signal is not None
+        assert signal.horizon_days is None
+
     def test_earn_pre_persists_position(self):
         self.agent._build_signal(
             self.sentiment, self.market,
@@ -751,6 +759,36 @@ class TestHandleEarnPost:
         assert signal.direction == SignalDirection.LONG
         assert signal.stage1_id is None  # no existing position
         agent._stage1_repo.update_status.assert_not_called()
+
+    def test_earn_beat_signal_has_horizon_days(self):
+        agent = self._beat_agent(open_pos=None)
+        event = NewsEvent(
+            event_id="earn-beat-1", headline="AAPL beats Q2", summary="",
+            source="benzinga", tickers=["AAPL"],
+            event_type=EventType.EARN_BEAT, published_at=NOW,
+        )
+        signal = agent._build_signal(
+            self.sentiment, self.market, {"earn-beat-1": event}, {},
+        )
+        assert signal is not None
+        assert signal.horizon_days == agent.settings.pead_horizon_days
+
+    def test_earn_miss_signal_has_horizon_days(self):
+        agent = self._beat_agent(open_pos=None)
+        sentiment = _make_sentiment(
+            event_id="earn-miss-1", label=SentimentLabel.VERY_BEARISH,
+            score=-0.9, confidence=0.85,
+        )
+        event = NewsEvent(
+            event_id="earn-miss-1", headline="AAPL misses Q2", summary="",
+            source="benzinga", tickers=["AAPL"],
+            event_type=EventType.EARN_MISS, published_at=NOW,
+        )
+        signal = agent._build_signal(
+            sentiment, self.market, {"earn-miss-1": event}, {},
+        )
+        assert signal is not None
+        assert signal.horizon_days == agent.settings.pead_horizon_days
 
 
 # ---------------------------------------------------------------------------
