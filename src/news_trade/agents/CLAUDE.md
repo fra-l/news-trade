@@ -16,7 +16,7 @@ compute their stage, write results back, and return the updated state.
 | `RiskManagerAgent` | `risk_manager.py` | **Done — five-layer fail-fast checks; risk_dry_run mode** |
 | `ExecutionAgent` | `execution.py` | **Done — Alpaca paper trading integration** |
 | `EarningsCalendarAgent` | `earnings_calendar.py` | **Done — daily cron, outside LangGraph pipeline** |
-| `ExpiryScanner` | `expiry_scanner.py` | **TODO** |
+| `ExpiryScanner` | `expiry_scanner.py` | **Done — daily cron, marks OPEN positions EXPIRED** |
 | `OrchestratorAgent` | `orchestrator.py` | Not used — pipeline built via `graph/pipeline.py` directly |
 
 ---
@@ -101,12 +101,24 @@ Prompt helpers are module-level functions: `_build_bull_prompt`, `_build_bear_pr
 `_build_synthesis_prompt`. The synthesis uses `response_schema=_DebateVerdictSchema`
 (structured output via tool-use).
 
-### What is NOT yet implemented in `SignalGeneratorAgent`
+### EARN_\* two-stage logic (Pattern D) — Done
 
-**EARN_\* two-stage logic (requires `Stage1Repository` added to constructor):**
-- `EARN_PRE` — size from `historical_beat_rate` via `Stage1Repository.load_historical_outcomes()`; persist `OpenStage1Position`
-- `EARN_BEAT/MISS` — load open Stage 1 position; confirm (add) or reverse; call `Stage1Repository.update_status()`
-- `EARN_MIXED` — emit EXIT signal (ConfidenceScorer gate 1.01 always fails — by design)
+`Stage1Repository` is now injected at construction time (`stage1_repo: Stage1Repository`).
+`_build_signal()` dispatches to three dedicated handlers before the generic label-based path:
+
+| Handler | Trigger | Logic |
+|---|---|---|
+| `_handle_earn_pre()` | `EARN_PRE` | Loads `load_historical_outcomes(ticker)`; uses `beat_rate` if `source='observed'`, else `settings.earn_default_beat_rate`; skips if outside [0.55, 0.85]; sizes position [0.25–0.40]; persists `OpenStage1Position`; emits LONG/SHORT signal with `stage1_id` |
+| `_handle_earn_post()` | `EARN_BEAT` / `EARN_MISS` | Loads `load_open(ticker)`; if agrees → `update_status(CONFIRMED)`, add remaining size; if disagrees → `update_status(REVERSED)`, full reverse; if no Stage 1 → fresh PEAD at 75% |
+| `_handle_earn_mixed()` | `EARN_MIXED` | Loads `load_open(ticker)`; if open → `update_status(EXITED)`, emit CLOSE signal with `passed_confidence_gate=True`; if no Stage 1 → return None |
+
+`run()` now also reads `estimates: dict[str, EstimatesData]` from state and passes it to
+`_build_signal()`. `_parse_calendar_fields()` (module-level helper) extracts `report_date`
+and `fiscal_quarter` from `estimates[ticker]` first, then parses the event headline as
+fallback, then defaults to `today+3 / "unknown"`.
+
+EARN_MIXED CLOSE signals bypass the confidence gate (`passed_confidence_gate=True`) because
+the gate for EARN_MIXED is 1.01 by design — exiting a position must not be blocked.
 
 See `docs/architecture/event-driven-signal-layer.md §3` for the full decision tree.
 
@@ -181,37 +193,34 @@ See `docs/architecture/event-driven-signal-layer.md §6` for the full specificat
 
 ---
 
-### `ExpiryScanner` — TODO
+### `ExpiryScanner` ✅ Done
 
-Runs alongside `EarningsCalendarAgent` on the same daily cron. Responsibilities:
+Runs alongside `EarningsCalendarAgent` on the daily cron at 07:15 ET Mon-Fri.
 
-1. Call `Stage1Repository.load_expired()` — returns all OPEN positions whose
-   `expected_report_date < today`.
-2. For each expired position, call `Stage1Repository.record_outcome(stage1_id, final_status=EXPIRED, eps_pct=None, price_1d=None)`.
-3. Log a warning per expired position for audit trail.
+Constructor: `settings: Settings`, `event_bus: EventBus`, `stage1_repo: Stage1Repository`
 
-Constructor receives: `Stage1Repository`, `Settings`, `EventBus`.
+`run(state)`:
+1. `stage1_repo.load_expired()` — all OPEN positions whose `expected_report_date < today`
+2. For each: `stage1_repo.update_status(pos.id, Stage1Status.EXPIRED)` + WARNING log
+3. Returns `{"errors": []}` — does not mutate other pipeline state keys
+
 No network calls. No LLM calls. Pure DB read + write.
 
-Without `ExpiryScanner`, expired Stage 1 positions are never closed. After a few earnings
-cycles the `stage1_positions` table accumulates stale OPEN rows, causing
-`RiskManagerAgent`'s concentration check (`load_all_open()`) to over-count open positions
-and progressively block new signals.
+Note: `EventBus.publish` requires a `BaseModel`; STAGE1_EXPIRED has no downstream consumer
+yet so publishing is omitted. The WARNING log serves as the audit trail.
 
 ---
 
-### Cron scheduler wiring (`main.py`) — TODO
+### Cron scheduler wiring (`main.py`) ✅ Done
 
-`main.py` currently runs only the LangGraph pipeline in a polling loop.
-`EarningsCalendarAgent` and `ExpiryScanner` must be scheduled independently.
+`main.py` uses `APScheduler` (`AsyncIOScheduler`) to run both cron agents without blocking
+the main polling loop:
 
-Minimum wiring:
-```python
-# Once per day at market open (07:00 ET Mon–Fri)
-await earnings_calendar_agent.run({})
-await expiry_scanner.run({})
+```
+EarningsCalendarAgent  — cron, hour=7, minute=0,  day_of_week="mon-fri", misfire_grace_time=300
+ExpiryScanner          — cron, hour=7, minute=15, day_of_week="mon-fri", misfire_grace_time=300
 ```
 
-Options: `apscheduler` (already available as a transitive dependency via LangGraph),
-`asyncio` task with a daily sleep, or an external cron triggering `uv run` directly.
-The chosen approach must not block the main polling loop.
+Both agents share a dedicated DB engine + session (separate from the pipeline's session).
+`scheduler.start()` is called before the `while True` loop; `scheduler.shutdown(wait=False)`
+runs in the `finally` block alongside `event_bus.close()`.

@@ -96,6 +96,19 @@ any signal where this is still `False`.
 
 ---
 
+## TradeSignal Two-Stage Field (Pattern D)
+
+Added to `TradeSignal` by `SignalGeneratorAgent._handle_earn_pre()` and `_handle_earn_post()`:
+
+```python
+stage1_id: str | None = None  # links a Stage 2 POST signal to its Stage 1 OpenStage1Position
+```
+
+`RiskManagerAgent` L2b (concentration check) exempts Stage 2 ADD signals where
+`stage1_id is not None` — they extend an existing position rather than opening a new one.
+
+---
+
 ## TradeSignal Debate Field (Pattern A)
 
 Added to `TradeSignal` by `SignalGeneratorAgent._debate_signal()`:
