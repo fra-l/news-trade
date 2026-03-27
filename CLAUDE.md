@@ -225,6 +225,7 @@ unless absolutely necessary with a comment explaining why.
 | **ExpiryScanner** | **Done — marks stale OPEN positions EXPIRED; 07:15 ET daily cron** |
 | **Cron scheduler wiring in main.py** | **Done — APScheduler AsyncIOScheduler; EarningsCalendarAgent 07:00 ET, ExpiryScanner 07:15 ET, PEADExpiryScanner 09:45 ET Mon-Fri** |
 | **FMPEstimatesProvider + EstimatesProvider Protocol** | **Done — fetches historical EPS beat rates from FMP earnings-surprises endpoint; three-tier fallback in `_handle_earn_pre()`: observed → FMP → static default; injected into EarningsCalendarAgent** |
+| **`HaltHandlerAgent` — drawdown emergency cleanup node** | **Done — cancels all Alpaca orders, closes all positions, expires OPEN Stage1 positions; wired as `halt_handler` node after `RiskManagerAgent` via `_route_after_risk()` 3-way router** |
 
 The full pipeline is now operational end-to-end for all event types. `SignalGeneratorAgent`
 implements the complete EARN_\* two-stage logic (Pattern D): EARN_PRE sizes from the
@@ -254,7 +255,7 @@ relies solely on the static 0.65 default; once ≥4 own quarters are observed th
 `PEAD_HORIZON_DAYS` calendar days via the 09:45 ET cron.
 
 **Remaining work (non-blocking enhancements):**
-- `halt_handler` LangGraph node (`graph/pipeline.py`) — dedicated handler when `system_halted=True`
+- None. All planned features are complete.
 
 ---
 

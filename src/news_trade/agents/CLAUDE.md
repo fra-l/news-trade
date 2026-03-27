@@ -47,6 +47,7 @@ repositories) are injected in the subclass `__init__` — never fetched from glo
 | `SentimentAnalystAgent` | `news_events`, `estimates` (optional) | `sentiment_results` |
 | `SignalGeneratorAgent` | `sentiment_results`, `market_context`, `news_events` | `trade_signals` |
 | `RiskManagerAgent` | `trade_signals`, `portfolio` | `approved_signals`, `rejected_signals`, `system_halted` |
+| `HaltHandlerAgent` | `system_halted`, `portfolio`, `errors` | `errors` |
 | `ExecutionAgent` | `approved_signals` | `orders` |
 | `EarningsCalendarAgent` | — (reads `settings.watchlist`) | `news_events`, `estimates`, `errors` |
 
@@ -64,12 +65,15 @@ NewsIngestorAgent
     │ news_events empty? → END
     ↓
 MarketDataAgent → SentimentAnalystAgent → SignalGeneratorAgent → RiskManagerAgent
-                                                                      │ no approved signals? → END
-                                                                      ↓
-                                                               ExecutionAgent → END
+                                                                      │ system_halted? → HaltHandlerAgent → END
+                                                                      │ approved signals? → ExecutionAgent → END
+                                                                      └─ else → END
 ```
 
-Routing logic: `graph/pipeline.py` — `_has_news_events()` and `_has_approved_signals()`.
+Routing logic: `graph/pipeline.py` — `_has_news_events()` (after news ingestor) and
+`_route_after_risk()` (3-way router after risk manager: `"halt"` → `HaltHandlerAgent`,
+`"execute"` → `ExecutionAgent`, `"end"` → END). `system_halted` takes priority over
+approved signals.
 
 ---
 
@@ -168,6 +172,27 @@ to `SUBMITTED`).
 It is wired as the `pead_expiry_scanner` cron job at **09:45 ET Mon–Fri** in `main.py`,
 using a dedicated `ExecutionAgent` instance (`pead_exec_agent`) with its own Alpaca client
 and cron session — independent of the pipeline's `ExecutionAgent`.
+
+---
+
+### `HaltHandlerAgent` ✅ Done
+
+Runs as a LangGraph node immediately after `RiskManagerAgent` when `system_halted=True`.
+
+Constructor: `settings: Settings`, `event_bus: EventBus`, `alpaca_client: TradingClient | None`,
+`stage1_repo: Stage1Repository | None` — both optional deps are `None`-safe.
+
+`run(state)`:
+1. Logs `CRITICAL` halt event with `portfolio.max_drawdown_pct` from state
+2. `await _cancel_all_orders()` — `asyncio.to_thread(alpaca_client.cancel_orders)`
+3. `await _close_all_positions()` — `asyncio.to_thread(alpaca_client.close_all_positions, cancel_orders=True)`
+4. `_expire_open_stage1_positions()` — `stage1_repo.load_all_open()` → `update_status(EXPIRED)` per position
+5. Returns `{"errors": [...]}` — does not mutate `system_halted` (already set by `RiskManagerAgent`)
+
+Each step is independently wrapped in `try/except`; failures are accumulated in `errors` and
+logged at `ERROR` level — cleanup continues even if Alpaca is unreachable. Mirrors the
+`None`-safe injection pattern from `ExecutionAgent` and the repository pattern from
+`ExpiryScanner`.
 
 ---
 
