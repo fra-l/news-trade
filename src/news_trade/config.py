@@ -4,25 +4,25 @@ Uses pydantic-settings so that every value can be overridden via env vars
 or a .env file at the project root.
 """
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class NewsProviderType(str, Enum):
+class NewsProviderType(StrEnum):
     RSS = "rss"
     BENZINGA = "benzinga"
 
 
-class MarketDataProviderType(str, Enum):
+class MarketDataProviderType(StrEnum):
     YFINANCE = "yfinance"
     POLYGON_FREE = "polygon_free"
     POLYGON_PAID = "polygon_paid"
     ALPACA = "alpaca"
 
 
-class SentimentProviderType(str, Enum):
+class SentimentProviderType(StrEnum):
     CLAUDE = "claude"
     KEYWORD = "keyword"
 
@@ -117,7 +117,9 @@ class Settings(BaseSettings):
     )
     market_data_provider: MarketDataProviderType = Field(
         default=MarketDataProviderType.YFINANCE,
-        description="Market data source: yfinance, polygon_free, polygon_paid, or alpaca",
+        description=(
+            "Market data source: yfinance, polygon_free, polygon_paid, or alpaca"
+        ),
     )
     sentiment_provider: SentimentProviderType = Field(
         default=SentimentProviderType.CLAUDE,
@@ -139,11 +141,20 @@ class Settings(BaseSettings):
     )
     earn_min_analyst_count: int = Field(
         default=3,
-        description="Minimum analyst count for full coverage_score; below this returns 0.1",
+        description=(
+            "Minimum analyst count for full coverage_score; below this returns 0.1"
+        ),
     )
     earn_guidance_weight: float = Field(
         default=0.20,
         description="Weight of guidance_sentiment in composite_surprise calculation",
+    )
+    earn_default_beat_rate: float = Field(
+        default=0.65,
+        description=(
+            "Fallback beat rate used for EARN_PRE sizing when Stage1Repository "
+            "has fewer than 4 observed outcomes and no FMP data is available"
+        ),
     )
 
     # --- Cost controls ---
