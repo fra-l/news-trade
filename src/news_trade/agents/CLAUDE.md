@@ -43,11 +43,11 @@ repositories) are injected in the subclass `__init__` — never fetched from glo
 |---|---|---|
 | `NewsIngestorAgent` | `last_poll` | `news_events`, `errors` |
 | `MarketDataAgent` | `news_events` | `market_context` (dict[ticker → MarketSnapshot]) |
-| `SentimentAnalystAgent` | `news_events` | `sentiment_results` |
+| `SentimentAnalystAgent` | `news_events`, `estimates` (optional) | `sentiment_results` |
 | `SignalGeneratorAgent` | `sentiment_results`, `market_context` | `trade_signals` |
 | `RiskManagerAgent` | `trade_signals`, `portfolio` | `approved_signals`, `rejected_signals` |
 | `ExecutionAgent` | `approved_signals` | `orders` |
-| `EarningsCalendarAgent` | — (reads `settings.watchlist`) | `news_events`, `errors` |
+| `EarningsCalendarAgent` | — (reads `settings.watchlist`) | `news_events`, `estimates`, `errors` |
 
 `EarningsCalendarAgent` runs **outside** the main pipeline on a daily cron. It publishes
 synthetic `EARN_PRE` events to Redis; the pipeline picks them up as regular news.
@@ -113,21 +113,6 @@ See `docs/architecture/event-driven-signal-layer.md §3` for the full decision t
 
 ## Stub Agents
 
-### `EarningsCalendarAgent` — **next to implement**
-
-Runs on a scheduled cadence (independent of the news pipeline). Responsibilities:
-
-1. Fetch the upcoming earnings calendar for `settings.watchlist` tickers (FMP or similar).
-2. For each ticker with a report date within the configured lookahead window, synthesise a
-   synthetic `NewsEvent` with `event_type=EventType.EARN_PRE`.
-3. Call `Stage1Repository.load_historical_outcomes(ticker)` to get the beat rate for sizing.
-4. Populate `EstimatesData` per ticker in `PipelineState` (`state["estimates"]`) so that
-   **Sentiment LLM routing Phase 2** can inject `EstimatesRenderer.render()` into the EARN_PRE
-   Claude prompt.
-5. Publish EARN_PRE events to the `EventBus` so the main pipeline picks them up.
-
-Constructor receives: `Stage1Repository`, `EventBus`, and a calendar data client.
-
 ### `RiskManagerAgent`
 
 Five check layers (fail-fast, in order):
@@ -173,10 +158,15 @@ Key dependencies to inject:
 Core logic:
 - Scans `today → today + 5 days` for watchlist tickers
 - Filters to `entry.is_actionable` (2–5 days ahead)
-- Deduplicates via `event_id = f"calendar_earn_pre_{ticker}_{report_date}"`
+- Builds `EstimatesData` per ticker via `_build_estimates(entry)` (skips entries where
+  `eps_estimate is None`); populates `state["estimates"]` regardless of dedup status
+- Deduplicates events via `event_id = f"calendar_earn_pre_{ticker}_{report_date}"`
 - Synthesises `NewsEvent(event_type=EARN_PRE, source="earnings_calendar")`
 - Publishes to Redis; persists to `NewsEventRow`
 - Falls back to `YFinanceCalendarProvider` if primary returns empty or raises
+
+The `estimates` dict in state is consumed by `SentimentAnalystAgent` → `ClaudeSentimentProvider`
+to inject `EstimatesRenderer.render()` into the EARN_PRE prompt (Sentiment LLM routing Phase 2).
 
 Use `get_calendar_provider(settings)` from `providers/__init__.py` to obtain the
 primary provider. Always pass `YFinanceCalendarProvider()` as the fallback.

@@ -206,29 +206,29 @@ unless absolutely necessary with a comment explaining why.
 | **DebateRound / DebateVerdict / DebateResult models (Pattern A)** | **Done** |
 | **SignalGeneratorAgent — run + _build_signal + _debate_signal (Pattern A)** | **Done** |
 | **ClaudeSentimentProvider — per-event LLM tier routing + EARN_PRE prompt** | **Done** |
+| **Sentiment LLM routing Phase 2 — EstimatesRenderer injected into EARN_PRE prompt** | **Done** |
 | **EarningsCalendarEntry model + ReportTiming StrEnum** | **Done** |
 | **CalendarProvider Protocol** | **Done** |
 | **FMPCalendarProvider + YFinanceCalendarProvider** | **Done** |
 | **EarningsCalendarAgent — cron-driven EARN_PRE event synthesis** | **Done** |
 | **ExecutionAgent (Alpaca)** | **Done — paper trading, asyncio.to_thread, OrderRow persistence** |
 | **RiskManagerAgent** | **TODO — stub** |
-| **Sentiment LLM routing Phase 2** | **TODO — blocked on EarningsCalendarAgent (EstimatesData in state)** |
 | **ExpiryScanner** | **TODO — calls Stage1Repository.record_outcome()** |
 | **Cron scheduler wiring in main.py** | **TODO — wires EarningsCalendarAgent + ExpiryScanner** |
 
 `SignalGeneratorAgent` is now implemented (Pattern A complete). `ClaudeSentimentProvider`
-now routes per event type — `quick` (Haiku) for non-earnings events, `deep` (Sonnet) for
-EARN_PRE/BEAT/MISS — and uses a specialised EARN_PRE system prompt (Phase 1 of the
-sentiment LLM routing spec). `ExecutionAgent` is now implemented — wraps the synchronous
-Alpaca `TradingClient` via `asyncio.to_thread`, persists orders to `OrderRow`. `EarningsCalendarAgent`
-is complete — runs outside the main pipeline on a daily cron, synthesises EARN_PRE events.
-`RiskManagerAgent` remains a stub.
+routes per event type — `quick` (Haiku) for non-earnings events, `deep` (Sonnet) for
+EARN_PRE/BEAT/MISS — and uses a specialised EARN_PRE system prompt. Sentiment LLM routing
+Phase 2 is complete: `EarningsCalendarAgent` now builds `EstimatesData` from calendar
+entries and populates `state["estimates"]`; `SentimentAnalystAgent` passes this dict to
+`analyse_batch()`; `ClaudeSentimentProvider` injects `EstimatesRenderer.render()` into the
+EARN_PRE user message so Claude reasons from analyst consensus data rather than headline
+text alone. `ExecutionAgent` is done — wraps Alpaca via `asyncio.to_thread`, persists
+`OrderRow`. `RiskManagerAgent` remains a stub.
 
 **Next implementation sequence:**
-1. **Sentiment LLM routing Phase 2** — inject `EstimatesRenderer.render()` into the EARN_PRE
-   prompt. Specified in `docs/architecture/sentiment-llm-routing-spec.md §Architecture Decision 2`.
-2. `RiskManagerAgent` — five-layer fail-fast risk checks.
-3. `ExpiryScanner` — closes expired Stage 1 positions via `Stage1Repository.record_outcome()`.
+1. `RiskManagerAgent` — five-layer fail-fast risk checks.
+2. `ExpiryScanner` — closes expired Stage 1 positions via `Stage1Repository.record_outcome()`.
 
 ---
 
