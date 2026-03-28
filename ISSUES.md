@@ -153,9 +153,14 @@ reducing Anthropic API spend for high-throughput tasks.
 - **`ClaudeSentimentProvider` accepts `LLMClient` (not `LLMClientFactory`)** — it always uses the deep client; the factory chooses the tier at the injection point in `providers/__init__.py`
 - **Structured output via tool-use** — `AnthropicLLMClient` uses Anthropic tool-use JSON extraction when `response_schema` is provided; consistent with the Claude API's reliable structured-output pattern
 
-### Not yet done (from spec §3.4 checklist)
+### Completed (from spec §3.4 checklist)
 
-- Steps 6–8: update all agent constructors to accept `LLMClientFactory`, update `OrchestratorAgent`, audit `SentimentAnalystAgent` for per-call quick/deep routing — deferred to a future PR once `SignalGeneratorAgent` is implemented and the routing opportunities become concrete
+- Steps 6–8 (previously deferred): `ClaudeSentimentProvider` now accepts `LLMClientFactory`
+  directly and selects the tier per event inside `_select_client()` — deep (Sonnet) for
+  `EARN_PRE/BEAT/MISS/EARNINGS`, quick (Haiku) for all other types. `OrchestratorAgent` is
+  unused (pipeline built via `graph/pipeline.py`). `SentimentAnalystAgent` is unchanged —
+  routing lives entirely inside the provider. All implemented in the Sentiment LLM Routing
+  phase (see `docs/architecture/sentiment-llm-routing-spec.md`).
 
 ---
 
@@ -249,6 +254,5 @@ Pattern B ✅ ──────────► Pattern A ✅
 #10 EarningsCalendarEntry ✅ ──► #11 Calendar providers ✅ ──► #12 EarningsCalendarAgent ✅
 ```
 
-Patterns A, B, C, D all resolved. Issues #10–#12 (EarningsCalendarAgent) resolved.
-`ExecutionAgent` done. Remaining stub agents: `RiskManagerAgent`.
-Next planned additions: `ExpiryScanner` (#22) and cron wiring in `main.py` (#13).
+All patterns (A, B, C, D) and all issues (#10–#27) resolved. Full pipeline
+operational end-to-end. No remaining planned work.

@@ -700,50 +700,52 @@ ExecutionAgent horizon expiry
 | ~~10~~ | ~~Add `EarningsCalendarEntry` model~~ ✅ | `models/calendar.py` | — |
 | ~~11~~ | ~~Implement `FMPCalendarProvider` + `YFinanceCalendarProvider`~~ ✅ | `providers/calendar/` | #10 |
 | ~~12~~ | ~~Implement `EarningsCalendarAgent` with dedup guard~~ ✅ | `agents/earnings_calendar.py` | #10, #11 |
-| 13 | Wire cron scheduler into `main.py` | `main.py` | #12, #22 |
-| 14 | Add `EarningsSurprise` + `MetricSurprise` models | `models/surprise.py` | — |
-| 15 | Add `OpenStage1Position` + `Stage1Status` | `models/positions.py` | — |
-| 16 | Update `TradeSignal` model with stage fields | `models/signals.py` | #15 |
-| 17 | Implement `FMPEstimatesProvider` | `providers/estimates/fmp.py` | #14 |
-| 18 | Implement `ConfidenceScorer` + `apply_confidence_gate` | `agents/signal_generator.py` | #14, #16 |
-| 19 | Add `EstimatesProvider` + `CalendarProvider` to protocols | `providers/protocols.py` | #14, #10 |
-| 20 | Add `OpenStage1PositionRow` ORM class | `services/database.py` | #15 |
-| 21 | Implement `Stage1Repository` | `services/stage1_repository.py` | #20 |
-| 22 | Add `ExpiryScanner` cron job | `agents/expiry_scanner.py` | #21 |
-| 23 | Wire `Stage1Repository` into `SignalGeneratorAgent` | `agents/signal_generator.py` | #21 |
-| 24 | Wire `Stage1Repository` into `RiskManagerAgent` | `agents/risk_manager.py` | #21 |
-| 25 | Implement `RiskManagerAgent` full logic | `agents/risk_manager.py` | #16, #21, #26 |
-| 26 | Add `RiskValidation` model | `models/risk.py` | — |
-| 27 | Add `halt_handler` node to LangGraph pipeline | `graph/pipeline.py` | #25 |
+| ~~13~~ | ~~Wire cron scheduler into `main.py`~~ ✅ | `main.py` | #12, #22 |
+| ~~14~~ | ~~Add `EarningsSurprise` + `MetricSurprise` models~~ ✅ | `models/surprise.py` | — |
+| ~~15~~ | ~~Add `OpenStage1Position` + `Stage1Status`~~ ✅ | `models/positions.py` | — |
+| ~~16~~ | ~~Update `TradeSignal` model with stage fields~~ ✅ | `models/signals.py` | #15 |
+| ~~17~~ | ~~Implement `FMPEstimatesProvider`~~ ✅ | `providers/estimates/fmp.py` | #14 |
+| ~~18~~ | ~~Implement `ConfidenceScorer` + `apply_confidence_gate`~~ ✅ | `services/confidence_scorer.py` | #14, #16 |
+| ~~19~~ | ~~Add `EstimatesProvider` + `CalendarProvider` to protocols~~ ✅ | `providers/base.py` | #14, #10 |
+| ~~20~~ | ~~Add `OpenStage1PositionRow` ORM class~~ ✅ | `services/tables.py` | #15 |
+| ~~21~~ | ~~Implement `Stage1Repository`~~ ✅ | `services/stage1_repository.py` | #20 |
+| ~~22~~ | ~~Add `ExpiryScanner` cron job~~ ✅ | `agents/expiry_scanner.py` | #21 |
+| ~~23~~ | ~~Wire `Stage1Repository` into `SignalGeneratorAgent`~~ ✅ | `agents/signal_generator.py` | #21 |
+| ~~24~~ | ~~Wire `Stage1Repository` into `RiskManagerAgent`~~ ✅ | `agents/risk_manager.py` | #21 |
+| ~~25~~ | ~~Implement `RiskManagerAgent` full logic~~ ✅ | `agents/risk_manager.py` | #16, #21, #26 |
+| ~~26~~ | ~~Add `RiskValidation` model~~ ✅ | `models/risk.py` | — |
+| ~~27~~ | ~~Add `halt_handler` node to LangGraph pipeline~~ ✅ | `graph/pipeline.py` | #25 |
 
 ### Implementation Order
 
 ```
-Leaf nodes (no dependencies) — start here, can be parallel:
-  #14  EarningsSurprise + MetricSurprise
-  #15  OpenStage1Position + Stage1Status
-  #26  RiskValidation model
-  #10  EarningsCalendarEntry
+All issues #10–#27 are complete. ✅
+
+Leaf nodes (no dependencies):
+  #14  EarningsSurprise + MetricSurprise ✅
+  #15  OpenStage1Position + Stage1Status ✅
+  #26  RiskValidation model ✅
+  #10  EarningsCalendarEntry ✅
 
 Second tier:
-  #16  TradeSignal updates             ← #15
-  #19  Protocol additions              ← #14, #10
-  #20  OpenStage1PositionRow ORM       ← #15
+  #16  TradeSignal updates ✅           ← #15 ✅
+  #19  Protocol additions ✅            ← #14 ✅, #10 ✅
+  #20  OpenStage1PositionRow ORM ✅     ← #15 ✅
 
 Third tier:
   #11  Calendar providers ✅            ← #10 ✅
-  #17  FMPEstimatesProvider            ← #14
-  #21  Stage1Repository                ← #20
+  #17  FMPEstimatesProvider ✅          ← #14 ✅
+  #21  Stage1Repository ✅              ← #20 ✅
 
 Fourth tier:
-  #18  ConfidenceScorer + gate         ← #14, #16
+  #18  ConfidenceScorer + gate ✅       ← #14 ✅, #16 ✅
   #12  EarningsCalendarAgent ✅         ← #11 ✅
-  #22  ExpiryScanner                   ← #21
-  #23  SignalGenerator wiring          ← #21
-  #24  RiskManager wiring              ← #21
-  #25  RiskManagerAgent full logic     ← #16, #21, #26
+  #22  ExpiryScanner ✅                 ← #21 ✅
+  #23  SignalGenerator wiring ✅        ← #21 ✅
+  #24  RiskManager wiring ✅            ← #21 ✅
+  #25  RiskManagerAgent full logic ✅   ← #16 ✅, #21 ✅, #26 ✅
 
 Final tier:
-  #13  Cron scheduler in main.py       ← #12, #22
-  #27  halt_handler pipeline node      ← #25
+  #13  Cron scheduler in main.py ✅     ← #12 ✅, #22 ✅
+  #27  halt_handler pipeline node ✅    ← #25 ✅
 ```
