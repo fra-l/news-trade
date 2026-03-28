@@ -28,10 +28,10 @@ Implemented in commit `a7d022b`:
 
 - `tests/test_models.py` — 44 tests covering all Pydantic models (including new `atr_14d` / `relative_volume` fields)
 - `tests/test_pipeline.py` — 10 tests for `build_pipeline()` and routing helpers
-- `tests/test_risk_rules.py` — 10 skipped placeholder tests for risk rule methods
+- `tests/test_risk_rules.py` — 39 tests covering all five check layers, `run()` integration, Stage 2 ADD exemption, and L3b size cap
 - `tests/test_providers.py` — 25 tests for Protocol compliance, factory functions, `KeywordSentimentProvider` logic, and `Settings` enums
 
-Total: 96 passing tests.
+Total: 504 passing tests.
 
 ---
 

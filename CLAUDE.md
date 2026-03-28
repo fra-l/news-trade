@@ -218,7 +218,7 @@ unless absolutely necessary with a comment explaining why.
 | **ExecutionAgent (Alpaca)** | **Done — paper trading, asyncio.to_thread, OrderRow persistence** |
 | **PEAD horizon expiry in `ExecutionAgent`** | **Done — `TradeSignal.horizon_days` + `OrderRow.close_after_date`; `scan_expired_pead()` cron closes Stage 2 positions at 09:45 ET** |
 | **RiskValidation model (`models/risk.py`)** | **Done — frozen audit model produced by RiskManagerAgent** |
-| **RiskManagerAgent — five-layer fail-fast checks** | **Done — confidence gate, drawdown halt, concentration, pending dedup, direction conflict; risk_dry_run mode** |
+| **RiskManagerAgent — five-layer fail-fast checks** | **Done — confidence gate, drawdown halt, concentration (Stage 2 ADD exempt), pending dedup, L3b hard size cap (`_apply_size_cap`), direction conflict; risk_dry_run mode** |
 | **SignalGeneratorAgent — ConfidenceScorer wiring (all event types)** | **Done — scorer injected; every signal exits _build_signal() with passed_confidence_gate set** |
 | **SignalGeneratorAgent — EARN_\* two-stage logic** | **Done — EARN_PRE sizes from beat_rate + persists Stage1; EARN_BEAT/MISS confirm/reverse; EARN_MIXED exits flat** |
 | **TradeSignal `stage1_id` field** | **Done — links Stage 2 POST signals to Stage 1 position; unblocks RiskManagerAgent ADD exemption** |
