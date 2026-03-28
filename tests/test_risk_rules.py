@@ -184,6 +184,31 @@ class TestCheckMaxPositions:
         )
         assert passed
 
+    def test_stage2_add_bypasses_concentration_check(self) -> None:
+        """Stage 2 ADD signals (stage1_id set) are exempt from max-positions check."""
+        signal = _make_signal(
+            direction=SignalDirection.LONG, stage1_id="some-stage1-uuid"
+        )
+        passed, _, _ = self.agent._evaluate(
+            signal, _make_portfolio(), open_count=3, approved_so_far=[]
+        )
+        assert passed
+
+    def test_stage2_add_exempt_at_limit_via_run(self) -> None:
+        """Integration: run() approves Stage 2 ADD signal even when at max positions."""
+        agent = _make_agent(settings=_make_settings(max_open_positions=0))
+        signal = _make_signal(
+            passed_confidence_gate=True,
+            direction=SignalDirection.LONG,
+            stage1_id="some-stage1-uuid",
+        )
+        import asyncio
+
+        state = {"trade_signals": [signal], "portfolio": _make_portfolio()}
+        result = asyncio.get_event_loop().run_until_complete(agent.run(state))
+        assert len(result["approved_signals"]) == 1
+        assert len(result["rejected_signals"]) == 0
+
 
 # ---------------------------------------------------------------------------
 # Layer 3a — Pending order conflict
@@ -364,3 +389,74 @@ class TestRiskManagerRun:
         assert result["approved_signals"][0].signal_id == "good"
         assert len(result["rejected_signals"]) == 1
         assert result["rejected_signals"][0].signal_id == "bad"
+
+
+# ---------------------------------------------------------------------------
+# Layer 3b — Position size cap
+# ---------------------------------------------------------------------------
+
+
+class TestSizeCapLayer:
+    def setup_method(self) -> None:
+        # equity=100_000, max_position_pct=0.10 → cap = 10_000 per position
+        self.agent = _make_agent(settings=_make_settings(max_position_pct=0.10))
+        self.portfolio = _make_portfolio(equity=100_000.0)
+
+    def test_qty_reduced_when_over_cap(self) -> None:
+        """200 shares @ $100 = $20k > $10k cap → reduced to 100 shares."""
+        signal = _make_signal(suggested_qty=200, entry_price=100.0)
+        result = self.agent._apply_size_cap(signal, self.portfolio)
+        assert result.suggested_qty == 100
+
+    def test_qty_unchanged_when_within_cap(self) -> None:
+        """50 shares @ $100 = $5k <= $10k cap → unchanged."""
+        signal = _make_signal(suggested_qty=50, entry_price=100.0)
+        result = self.agent._apply_size_cap(signal, self.portfolio)
+        assert result.suggested_qty == 50
+
+    def test_no_entry_price_skips_cap(self) -> None:
+        """Market order (entry_price=None) → signal returned unchanged."""
+        signal = _make_signal(suggested_qty=999, entry_price=None)
+        result = self.agent._apply_size_cap(signal, self.portfolio)
+        assert result.suggested_qty == 999
+
+    def test_zero_equity_skips_cap(self) -> None:
+        """Zero equity → no division; signal returned unchanged."""
+        signal = _make_signal(suggested_qty=999, entry_price=10.0)
+        result = self.agent._apply_size_cap(signal, _make_portfolio(equity=0.0))
+        assert result.suggested_qty == 999
+
+    def test_capped_qty_minimum_one(self) -> None:
+        """Even if max_value < entry_price, qty floors at 1."""
+        # equity=100, max_position_pct=0.10 → cap=10; entry_price=50 → 0.2 → floors to 1
+        portfolio = _make_portfolio(equity=100.0)
+        signal = _make_signal(suggested_qty=10, entry_price=50.0)
+        result = self.agent._apply_size_cap(signal, portfolio)
+        assert result.suggested_qty == 1
+
+    def test_original_signal_not_mutated(self) -> None:
+        """_apply_size_cap returns a model_copy; the original is unchanged."""
+        signal = _make_signal(suggested_qty=200, entry_price=100.0)
+        result = self.agent._apply_size_cap(signal, self.portfolio)
+        assert result is not signal
+        assert signal.suggested_qty == 200  # original untouched
+
+    async def test_run_applies_cap_to_approved_signal(self) -> None:
+        """Integration: run() shrinks an over-cap signal before adding to approved."""
+        signal = _make_signal(
+            passed_confidence_gate=True, suggested_qty=200, entry_price=100.0
+        )
+        state = {"trade_signals": [signal], "portfolio": self.portfolio}
+        result = await self.agent.run(state)
+        assert len(result["approved_signals"]) == 1
+        assert result["approved_signals"][0].suggested_qty == 100
+
+    async def test_run_does_not_cap_rejected_signal(self) -> None:
+        """Rejected signals are not modified by the size cap."""
+        signal = _make_signal(
+            passed_confidence_gate=False, suggested_qty=200, entry_price=100.0
+        )
+        state = {"trade_signals": [signal], "portfolio": self.portfolio}
+        result = await self.agent.run(state)
+        assert len(result["rejected_signals"]) == 1
+        assert result["rejected_signals"][0].suggested_qty == 200
