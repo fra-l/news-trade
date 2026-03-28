@@ -32,7 +32,8 @@ class RiskManagerAgent(BaseAgent):
     1. Confidence gate  — reject if ``passed_confidence_gate`` is False.
     2a. Drawdown halt   — reject (non-EXIT) if portfolio drawdown >= threshold;
                           sets ``system_halted=True`` in pipeline state.
-    2b. Concentration   — reject (non-EXIT, non-ADD) if open position count >= limit.
+    2b. Concentration   — reject (non-EXIT, non-ADD) if open position count >= limit;
+                          Stage 2 ADD signals (stage1_id set) are exempt.
     3a. Pending conflict — reject if ticker already approved in this batch.
     3b. Size cap        — soft: log warning if position value exceeds
                           ``max_position_pct``; no rejection (model uses
@@ -106,11 +107,13 @@ class RiskManagerAgent(BaseAgent):
                         _SystemHaltedEvent(reason=reason or "drawdown limit breached"),
                     )
             else:
+                # L3b — apply size cap (modify, not reject) on approved signals.
+                signal = self._apply_size_cap(signal, portfolio)
                 self.logger.info(
                     "Signal %s for %s APPROVED (size=%s)",
                     signal.signal_id,
                     signal.ticker,
-                    validation.approved_size if validation else signal.suggested_qty,
+                    signal.suggested_qty,
                 )
                 approved.append(signal)
 
@@ -205,9 +208,8 @@ class RiskManagerAgent(BaseAgent):
                 ),
             )
 
-        # L3b — size cap (soft, no reject)
+        # L3b — size cap (modify, not reject); actual reduction applied in run()
         checks.append("size_cap")
-        self._warn_size_cap(signal, portfolio)
 
         # L3c — direction conflict
         checks.append("direction_conflict")
@@ -251,11 +253,13 @@ class RiskManagerAgent(BaseAgent):
     def _check_concentration(self, signal: TradeSignal, open_count: int) -> bool:
         """Layer 2b — return True if there is room for another position.
 
-        EXIT signals always pass.  Stage 2 ADD signals (stage1_id set) would also
-        be exempt, but stage1_id is not yet on the model — that exemption is a TODO
-        for when EARN_* Stage 2 logic is implemented.
+        EXIT signals always pass.  Stage 2 ADD signals (``stage1_id`` set) also
+        pass — they extend an existing EARN_PRE position rather than opening a
+        new one, so they must not count against the concentration limit.
         """
         if signal.direction == SignalDirection.CLOSE:
+            return True
+        if signal.stage1_id is not None:
             return True
         return open_count < self.settings.max_open_positions
 
@@ -265,29 +269,40 @@ class RiskManagerAgent(BaseAgent):
         """Layer 3a — True if ticker already has a pending order in this batch."""
         return signal.ticker in {s.ticker for s in approved}
 
-    def _warn_size_cap(self, signal: TradeSignal, portfolio: PortfolioState) -> None:
-        """Layer 3b — log a warning if position value would exceed max_position_pct.
+    def _apply_size_cap(
+        self, signal: TradeSignal, portfolio: PortfolioState
+    ) -> TradeSignal:
+        """Layer 3b — reduce ``suggested_qty`` if position value exceeds
+        ``max_position_pct``.
 
-        No rejection: the current model uses ``suggested_qty`` (integer shares) rather
-        than ``size_pct``, making a hard cap impossible without a real-time price.
-        Full enforcement is deferred until the TradeSignal model is updated with
-        ``size_pct`` and ``entry_price`` is reliably set.
+        Returns the same signal unchanged when:
+        - ``entry_price`` is None (market order; no price to compute against), or
+        - ``portfolio.equity`` is zero or negative, or
+        - the position value is already within the cap.
+
+        When the cap is breached the signal is returned as a ``model_copy`` with a
+        reduced ``suggested_qty = max(1, floor(max_value / entry_price))``.  This is
+        a *modify, not reject* layer — the signal is still approved.
         """
         if signal.entry_price is None or portfolio.equity <= 0:
-            return
+            return signal
         position_value = signal.suggested_qty * signal.entry_price
         max_value = portfolio.equity * self.settings.max_position_pct
-        if position_value > max_value:
-            self.logger.warning(
-                "Signal %s size %.2f exceeds max_position_pct cap %.2f "
-                "(equity=%.2f, max_position_pct=%.2f) — not enforced until "
-                "TradeSignal.size_pct is implemented",
-                signal.signal_id,
-                position_value,
-                max_value,
-                portfolio.equity,
-                self.settings.max_position_pct,
-            )
+        if position_value <= max_value:
+            return signal
+        capped_qty = max(1, int(max_value / signal.entry_price))
+        self.logger.warning(
+            "Signal %s size reduced %d → %d shares: position value %.2f exceeds "
+            "max_position_pct cap %.2f (equity=%.2f, max_position_pct=%.2f)",
+            signal.signal_id,
+            signal.suggested_qty,
+            capped_qty,
+            position_value,
+            max_value,
+            portfolio.equity,
+            self.settings.max_position_pct,
+        )
+        return signal.model_copy(update={"suggested_qty": capped_qty})
 
     def _check_direction_conflict(
         self, signal: TradeSignal, portfolio: PortfolioState

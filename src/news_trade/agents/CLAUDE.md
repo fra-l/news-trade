@@ -137,9 +137,9 @@ Five check layers (fail-fast, in order):
 |---|---|---|
 | L1 | `passed_confidence_gate` | REJECT using `signal.rejection_reason` |
 | L2a | `portfolio.max_drawdown_pct >= settings.max_drawdown_pct` (non-EXIT) | REJECT + set `system_halted=True` + publish `SYSTEM_HALTED` to event_bus |
-| L2b | `open_count >= settings.max_open_positions` (non-EXIT) | REJECT; `open_count = len(stage1_repo.load_all_open()) + portfolio.position_count` |
+| L2b | `open_count >= settings.max_open_positions` (non-EXIT, non-ADD) | REJECT; `open_count = len(stage1_repo.load_all_open()) + portfolio.position_count`; Stage 2 ADD signals (`stage1_id is not None`) are exempt |
 | L3a | ticker in `{s.ticker for s in approved_so_far}` | REJECT (within-batch dedup) |
-| L3b | position value > `equity * max_position_pct` | WARN only — `suggested_qty` model; no hard reject yet |
+| L3b | position value > `equity * max_position_pct` | REDUCE `suggested_qty = max(1, floor(max_value / entry_price))`; only enforced when `entry_price` is set; modify not reject |
 | L3c | existing position has opposite direction | REJECT |
 
 `settings.risk_dry_run=True` runs all checks and logs, but moves every signal to
