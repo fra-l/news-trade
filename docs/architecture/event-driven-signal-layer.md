@@ -494,9 +494,16 @@ if signal.ticker in pending_order_tickers
 
 **Layer 3b — Position size cap (modify, not reject)**
 ```
-approved_size = min(signal.size_pct, settings.max_position_pct)  (default 0.15)
-if reduced, log warning and continue
+position_value = signal.suggested_qty * signal.entry_price   (skipped if entry_price is None)
+max_value      = portfolio.equity * settings.max_position_pct  (default 0.15)
+
+if position_value > max_value:
+  capped_qty = max(1, floor(max_value / signal.entry_price))
+  signal = signal.model_copy(update={"suggested_qty": capped_qty})
+  log warning and continue
 ```
+Applied via `_apply_size_cap()` in `run()` after `_evaluate()` approves the signal.
+Skipped for market orders (`entry_price is None`) or when `equity <= 0`.
 
 **Layer 3c — Direction conflict**
 ```

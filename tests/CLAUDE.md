@@ -19,7 +19,7 @@ No real network calls, no real API keys, no Redis, no file-system databases.
 | `test_stage1_repository.py` | `Stage1Repository` | In-memory SQLite |
 | `test_earnings_calendar.py` | `EarningsCalendarAgent`, `EarningsCalendarEntry`, `_synthesise_event`, `estimates_provider` wiring | AsyncMock providers + in-memory SQLite |
 | `test_fmp_estimates_provider.py` | `FMPEstimatesProvider` — beat rate computation, HTTP path, edge cases, protocol compliance | `sys.modules` aiohttp mock (aiohttp not installed in test env) |
-| `test_risk_rules.py` | Risk rules | Placeholder — all skipped |
+| `test_risk_rules.py` | `RiskManagerAgent` — all five check layers (L1–L3c), `run()` integration, Stage 2 ADD exemption (L2b), size cap reduction (L3b) | In-memory SQLite + `MagicMock` `EventBus` |
 | `test_execution.py` | `ExecutionAgent` — order side mapping, Alpaca submission, `OrderRow` persistence, `close_after_date` storage, `scan_expired_pead()` cron | MagicMock Alpaca + in-memory SQLite |
 | `test_expiry_scanner.py` | `ExpiryScanner` — expired position marking, no-op on empty, real-repo integration | MagicMock `Stage1Repository` + in-memory SQLite |
 | `test_signal_generator.py` | `SignalGeneratorAgent` — generic signals, debate gate, EARN_\* two-stage logic, three-tier beat-rate fallback, `_parse_calendar_fields` | MagicMock `Stage1Repository` + `ConfidenceScorer` |
