@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import pytest
 
@@ -41,7 +41,14 @@ def mock_provider():
 
 
 @pytest.fixture()
-def agent(mock_provider):
+def mock_watchlist_manager():
+    wlm = MagicMock()
+    wlm.get_active_watchlist.return_value = ["AAPL", "MSFT", "NVDA"]
+    return wlm
+
+
+@pytest.fixture()
+def agent(mock_provider, mock_watchlist_manager):
     settings = MagicMock()
     settings.watchlist = ["AAPL", "MSFT", "NVDA"]
     settings.database_url = "sqlite://"  # in-memory SQLite — no file needed
@@ -54,7 +61,10 @@ def agent(mock_provider):
 
         engine = create_engine("sqlite://")
         mock_engine_factory.return_value = engine
-        a = NewsIngestorAgent(settings, event_bus, provider=mock_provider)
+        a = NewsIngestorAgent(
+            settings, event_bus, provider=mock_provider,
+            watchlist_manager=mock_watchlist_manager,
+        )
 
     return a
 

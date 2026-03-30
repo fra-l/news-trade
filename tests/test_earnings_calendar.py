@@ -132,6 +132,33 @@ class TestEarningsCalendarEntry:
         )
         assert entry.timing == ReportTiming.UNKNOWN
 
+    def test_is_candidate_at_1_day(self) -> None:
+        entry = _make_entry(report_date=date.today() + timedelta(days=1))
+        assert entry.is_candidate is True
+
+    def test_is_candidate_at_31_days(self) -> None:
+        entry = _make_entry(report_date=date.today() + timedelta(days=31))
+        assert entry.is_candidate is True
+
+    def test_not_candidate_at_0_days(self) -> None:
+        entry = _make_entry(report_date=date.today())
+        assert entry.is_candidate is False
+
+    def test_not_candidate_at_32_days(self) -> None:
+        entry = _make_entry(report_date=date.today() + timedelta(days=32))
+        assert entry.is_candidate is False
+
+    def test_not_candidate_in_past(self) -> None:
+        entry = _make_entry(report_date=date.today() - timedelta(days=1))
+        assert entry.is_candidate is False
+
+    def test_candidate_includes_actionable_window(self) -> None:
+        """is_candidate is a superset of is_actionable (1-31 vs 2-5 days)."""
+        for days in range(2, 6):
+            entry = _make_entry(report_date=date.today() + timedelta(days=days))
+            assert entry.is_actionable is True
+            assert entry.is_candidate is True
+
 
 # ---------------------------------------------------------------------------
 # TestSynthesiseEvent

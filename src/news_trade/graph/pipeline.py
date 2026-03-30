@@ -20,10 +20,12 @@ from news_trade.agents.signal_generator import SignalGeneratorAgent
 from news_trade.config import Settings
 from news_trade.graph.state import PipelineState
 from news_trade.providers import (
+    get_calendar_provider,
     get_market_data_provider,
     get_news_provider,
     get_sentiment_provider,
 )
+from news_trade.providers.calendar.yfinance_provider import YFinanceCalendarProvider
 from news_trade.services.confidence_scorer import ConfidenceScorer
 from news_trade.services.database import build_engine, build_session_factory
 from news_trade.services.estimates_renderer import EstimatesRenderer
@@ -31,6 +33,7 @@ from news_trade.services.event_bus import EventBus
 from news_trade.services.llm_client import LLMClientFactory
 from news_trade.services.stage1_repository import Stage1Repository
 from news_trade.services.tables import Base
+from news_trade.services.watchlist_manager import WatchlistManager
 
 # Node name constants
 NEWS = "news_ingestor"
@@ -68,14 +71,32 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     Returns:
         A compiled LangGraph ``StateGraph``.
     """
+    # WatchlistManager — shared across the three watchlist-reading agents.
+    # Uses a separate session from stage1_repo to avoid state bleed.
+    wl_engine = build_engine(settings)
+    Base.metadata.create_all(wl_engine)
+    wl_session = build_session_factory(settings)()
+    wl_manager = WatchlistManager(
+        settings=settings,
+        session=wl_session,
+        primary=get_calendar_provider(settings),
+        fallback=YFinanceCalendarProvider(),
+    )
+
     news_agent = NewsIngestorAgent(
-        settings, event_bus, provider=get_news_provider(settings)
+        settings,
+        event_bus,
+        provider=get_news_provider(settings),
+        watchlist_manager=wl_manager,
     )
     market_agent = MarketDataAgent(
         settings, event_bus, provider=get_market_data_provider(settings)
     )
     sentiment_agent = SentimentAnalystAgent(
-        settings, event_bus, provider=get_sentiment_provider(settings)
+        settings,
+        event_bus,
+        provider=get_sentiment_provider(settings),
+        watchlist_manager=wl_manager,
     )
 
     # Shared DB session for Stage1Repository (used by SignalGenerator + RiskManager).

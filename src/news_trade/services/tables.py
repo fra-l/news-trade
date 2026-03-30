@@ -159,3 +159,22 @@ class OrderRow(Base):
         doc="Auto-close date for PEAD positions; None for non-PEAD orders",
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class WatchlistSelectionRow(Base):
+    """Persisted watchlist selection snapshot saved via the select-watchlist CLI.
+
+    Each call to ``WatchlistManager.save_selection()`` appends a new row.
+    ``load_selected()`` reads the most recent row by ``saved_at``.  Older rows
+    are retained for audit purposes.
+    """
+
+    __tablename__ = "watchlist_selections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tickers_json: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        doc="JSON-encoded list of ticker strings chosen by the operator",
+    )
+    saved_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

@@ -28,6 +28,7 @@ dev = [
 
 [project.scripts]
 news-trade = "news_trade.main:entrypoint"
+select-watchlist = "news_trade.cli.select_watchlist:entrypoint"
 
 [build-system]
 requires = ["hatchling"]
