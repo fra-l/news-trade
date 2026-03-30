@@ -36,6 +36,11 @@ class BaseAgent(ABC):
 All agents inherit `BaseAgent`. Additional dependencies (providers, db session,
 repositories) are injected in the subclass `__init__` — never fetched from globals.
 
+`NewsIngestorAgent`, `SentimentAnalystAgent`, and `EarningsCalendarAgent` each accept a
+`watchlist_manager: WatchlistManager` (required for the first two, optional for the third)
+and call `get_active_watchlist()` wherever `settings.watchlist` was previously used.  This
+lets the runtime watchlist update between cycles without a restart.
+
 ---
 
 ## PipelineState Keys — What Each Agent Reads / Writes
@@ -49,7 +54,7 @@ repositories) are injected in the subclass `__init__` — never fetched from glo
 | `RiskManagerAgent` | `trade_signals`, `portfolio` | `approved_signals`, `rejected_signals`, `system_halted` |
 | `HaltHandlerAgent` | `system_halted`, `portfolio`, `errors` | `errors` |
 | `ExecutionAgent` | `approved_signals` | `orders` |
-| `EarningsCalendarAgent` | — (reads `settings.watchlist`) | `news_events`, `estimates`, `errors` |
+| `EarningsCalendarAgent` | — (reads watchlist via `WatchlistManager`) | `news_events`, `estimates`, `errors` |
 
 `EarningsCalendarAgent` runs **outside** the main pipeline on a daily cron. It publishes
 synthetic `EARN_PRE` events to Redis; the pipeline picks them up as regular news.
@@ -208,6 +213,9 @@ Key dependencies to inject:
   `get_historical_beat_rate(ticker)` for each actionable entry and attaches the result to
   `EstimatesData.historical_beat_rate` via `model_copy()`. Provider failures are swallowed
   with a WARNING log so the run is never aborted.
+- `watchlist_manager: WatchlistManager | None` — optional (backward-compatible default `None`);
+  when provided, `run()` calls `watchlist_manager.get_active_watchlist()` instead of
+  `settings.watchlist`. Pass the `cron_wl_manager` instance from `main.py`.
 
 Core logic:
 - Scans `today → today + 5 days` for watchlist tickers

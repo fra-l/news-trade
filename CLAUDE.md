@@ -226,6 +226,7 @@ unless absolutely necessary with a comment explaining why.
 | **Cron scheduler wiring in main.py** | **Done — APScheduler AsyncIOScheduler; EarningsCalendarAgent 07:00 ET, ExpiryScanner 07:15 ET, PEADExpiryScanner 09:45 ET Mon-Fri** |
 | **FMPEstimatesProvider + EstimatesProvider Protocol** | **Done — fetches historical EPS beat rates from FMP earnings-surprises endpoint; three-tier fallback in `_handle_earn_pre()`: observed → FMP → static default; injected into EarningsCalendarAgent** |
 | **`HaltHandlerAgent` — drawdown emergency cleanup node** | **Done — cancels all Alpaca orders, closes all positions, expires OPEN Stage1 positions; wired as `halt_handler` node after `RiskManagerAgent` via `_route_after_risk()` 3-way router** |
+| **Dynamic Watchlist Selection** | **Done — `WatchlistManager` service + `select-watchlist` CLI; `WatchlistSelectionRow` ORM table; `is_candidate` computed field on `EarningsCalendarEntry`; injected into `NewsIngestorAgent`, `SentimentAnalystAgent`, `EarningsCalendarAgent`** |
 
 The full pipeline is now operational end-to-end for all event types. `SignalGeneratorAgent`
 implements the complete EARN_\* two-stage logic (Pattern D): EARN_PRE sizes from the
@@ -235,7 +236,10 @@ bypasses the confidence gate. `ExpiryScanner` marks stale OPEN positions EXPIRED
 `RiskManagerAgent` concentration check stays accurate. EARN_BEAT/MISS signals carry a
 `horizon_days` value; `ExecutionAgent.scan_expired_pead()` auto-closes these positions when
 the horizon passes. All three cron agents are scheduled via `APScheduler` (`AsyncIOScheduler`)
-in `main.py` without blocking the polling loop.
+in `main.py` without blocking the polling loop. The dynamic watchlist (`WatchlistManager`)
+lets operators scan the next 30 days of earnings via `uv run select-watchlist` and activate
+tickers at runtime without restarting the process; `settings.watchlist` is the fallback when
+no DB selection exists.
 
 **Deployment blockers — minimum path to a running paper-trading instance:**
 
@@ -255,7 +259,7 @@ relies solely on the static 0.65 default; once ≥4 own quarters are observed th
 `PEAD_HORIZON_DAYS` calendar days via the 09:45 ET cron.
 
 **Remaining work (non-blocking enhancements):**
-- None. All planned features are complete.
+- Dynamic Watchlist Phase 2 — per-ticker assessment in `select-watchlist` (sector, 52-week return, analyst consensus, historical beat rate; CLI-only, no pipeline changes).
 
 ---
 
@@ -311,3 +315,9 @@ All PRs must pass `tests.yml` before merging.
    testable at the graph level.
 
 10. **SQLite default** — Zero-config for development; swap to PostgreSQL via `DATABASE_URL`.
+
+11. **Operator-driven dynamic watchlist** — `WatchlistManager` surfaces upcoming earnings via
+    `uv run select-watchlist`; the operator picks tickers interactively. The selection is
+    persisted to `WatchlistSelectionRow` and picked up on the next polling cycle — no restart.
+    `settings.watchlist` remains the fallback when no DB selection exists. Full automation
+    (auto-add all reporters) was rejected to keep API costs and risk exposure bounded.

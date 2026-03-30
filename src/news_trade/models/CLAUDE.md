@@ -75,6 +75,7 @@ Models with `@computed_field` properties (derived at access time, not stored):
 | `OpenStage1Position` | `days_to_report` | `(expected_report_date - date.today()).days` |
 | `EarningsCalendarEntry` | `days_until_report` | `(report_date - date.today()).days` |
 | `EarningsCalendarEntry` | `is_actionable` | `2 <= days_until_report <= 5` |
+| `EarningsCalendarEntry` | `is_candidate` | `1 <= days_until_report <= 31` |
 
 `days_to_report` is time-relative — negative means the report date has passed.
 
