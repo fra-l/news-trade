@@ -11,6 +11,7 @@ from news_trade.models.events import EventType
 from news_trade.providers.base import NewsProvider
 from news_trade.services.database import build_engine
 from news_trade.services.tables import Base, NewsEventRow
+from news_trade.services.watchlist_manager import WatchlistManager
 
 # Ordered from most-specific to least-specific to avoid false matches
 _KEYWORD_MAP: list[tuple[frozenset[str], EventType]] = [
@@ -46,9 +47,16 @@ class NewsIngestorAgent(BaseAgent):
         - Publish each new NewsEvent to the event bus and return them in state.
     """
 
-    def __init__(self, settings, event_bus, provider: NewsProvider) -> None:  # type: ignore[override]
+    def __init__(  # type: ignore[override]
+        self,
+        settings,
+        event_bus,
+        provider: NewsProvider,
+        watchlist_manager: WatchlistManager,
+    ) -> None:
         super().__init__(settings, event_bus)
         self._provider = provider
+        self._watchlist_manager = watchlist_manager
         self._engine = build_engine(settings)
         Base.metadata.create_all(self._engine)
 
@@ -60,7 +68,7 @@ class NewsIngestorAgent(BaseAgent):
         """
         try:
             candidates = await self._provider.fetch(
-                tickers=self.settings.watchlist,
+                tickers=self._watchlist_manager.get_active_watchlist(),
                 since=state.get("last_poll"),
             )
         except Exception as exc:  # noqa: BLE001
@@ -97,7 +105,7 @@ class NewsIngestorAgent(BaseAgent):
 
     def _matches_watchlist(self, tickers: list[str]) -> bool:
         """Return True if any ticker is on the configured watchlist."""
-        watchlist = set(self.settings.watchlist)
+        watchlist = set(self._watchlist_manager.get_active_watchlist())
         return bool(set(tickers) & watchlist)
 
     def _is_duplicate(self, event_id: str, session: Session) -> bool:

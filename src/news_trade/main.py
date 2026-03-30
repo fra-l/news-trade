@@ -25,6 +25,7 @@ from news_trade.services.database import (
 from news_trade.services.event_bus import EventBus
 from news_trade.services.stage1_repository import Stage1Repository
 from news_trade.services.tables import Base
+from news_trade.services.watchlist_manager import WatchlistManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,6 +64,13 @@ async def main() -> None:
     cron_session = build_session_factory(settings)()
     cron_stage1_repo = Stage1Repository(cron_session)
 
+    cron_wl_manager = WatchlistManager(
+        settings=settings,
+        session=cron_session,
+        primary=get_calendar_provider(settings),
+        fallback=YFinanceCalendarProvider(),
+    )
+
     earnings_agent = EarningsCalendarAgent(
         settings,
         event_bus,
@@ -70,6 +78,7 @@ async def main() -> None:
         fallback=YFinanceCalendarProvider(),
         engine=cron_engine,
         estimates_provider=get_estimates_provider(settings),
+        watchlist_manager=cron_wl_manager,
     )
     expiry_scanner = ExpiryScanner(settings, event_bus, stage1_repo=cron_stage1_repo)
 

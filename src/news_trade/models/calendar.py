@@ -53,3 +53,14 @@ class EarningsCalendarEntry(BaseModel):
         Under 2 days: implied volatility already elevated — adverse entry price.
         """
         return 2 <= self.days_until_report <= 5
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_candidate(self) -> bool:
+        """True if the report is 1-31 days away (the broad monthly scan window).
+
+        Used by WatchlistManager.scan_candidates() to surface upcoming reports
+        for operator review.  Wider than ``is_actionable`` so the operator can
+        plan ahead; ``is_actionable`` remains the gate for EARN_PRE synthesis.
+        """
+        return 1 <= self.days_until_report <= 31
