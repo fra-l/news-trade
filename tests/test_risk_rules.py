@@ -194,7 +194,7 @@ class TestCheckMaxPositions:
         )
         assert passed
 
-    def test_stage2_add_exempt_at_limit_via_run(self) -> None:
+    async def test_stage2_add_exempt_at_limit_via_run(self) -> None:
         """Integration: run() approves Stage 2 ADD signal even when at max positions."""
         agent = _make_agent(settings=_make_settings(max_open_positions=0))
         signal = _make_signal(
@@ -202,10 +202,8 @@ class TestCheckMaxPositions:
             direction=SignalDirection.LONG,
             stage1_id="some-stage1-uuid",
         )
-        import asyncio
-
         state = {"trade_signals": [signal], "portfolio": _make_portfolio()}
-        result = asyncio.get_event_loop().run_until_complete(agent.run(state))
+        result = await agent.run(state)
         assert len(result["approved_signals"]) == 1
         assert len(result["rejected_signals"]) == 0
 
