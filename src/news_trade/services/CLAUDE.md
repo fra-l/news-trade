@@ -10,12 +10,13 @@ All services receive dependencies via constructor injection.
 | File | Class | Purpose |
 |---|---|---|
 | `database.py` | — | Engine + session factory + `create_tables()` |
-| `tables.py` | `Base`, 5 ORM classes | SQLAlchemy table definitions |
+| `tables.py` | `Base`, 6 ORM classes | SQLAlchemy table definitions |
 | `llm_client.py` | `LLMClient` (Protocol), `AnthropicLLMClient`, `LLMClientFactory` | Two-tier LLM routing |
 | `estimates_renderer.py` | `EstimatesRenderer` | Deterministic FMP data → narrative formatter |
 | `confidence_scorer.py` | `ConfidenceScorer` | 4-component weighted confidence scoring + gate |
 | `stage1_repository.py` | `Stage1Repository` | Stage 1 position CRUD + outcome reflection |
 | `event_bus.py` | `EventBus` | Async Redis pub/sub wrapper |
+| `watchlist_manager.py` | `WatchlistManager` | Runtime watchlist backed by SQLite; CLI scan + operator selection |
 
 ---
 
@@ -118,6 +119,7 @@ calls `Base.metadata.create_all()` — no Alembic, safe to call on every startup
 | `stage1_positions` | **String (UUID)** | UUID set in application code before insert |
 | `earnings_outcomes` | Integer autoincrement | `stage1_id` has `unique=True` for idempotency |
 | `orders` | Integer autoincrement | `order_id` is the business key; `close_after_date` nullable Date column drives PEAD expiry |
+| `watchlist_selections` | Integer autoincrement | Append-only audit log; `load_selected()` reads most-recent row by `saved_at` |
 
 `OrderRow.close_after_date` (nullable `Date`, indexed) is set at insert time by
 `ExecutionAgent._log_order()` when the signal carries `horizon_days`. Upserts leave the
@@ -129,6 +131,33 @@ model and the DB row share the same `id` without a round-trip.
 
 DateTime defaults use `default=datetime.utcnow` (callable, not call). `updated_at` uses
 `onupdate=datetime.utcnow` plus an explicit assignment in `update_status()` as belt-and-suspenders.
+
+---
+
+## `watchlist_manager.py` — Runtime Watchlist Selection
+
+```python
+manager = WatchlistManager(settings, session, primary=CalendarProvider, fallback=CalendarProvider)
+tickers  = manager.get_active_watchlist()          # DB selection or settings.watchlist fallback
+entries  = await manager.scan_candidates(from_d, to_d)  # is_candidate=True entries, sorted by date
+manager.save_selection(["AAPL", "NVDA"])           # persists new WatchlistSelectionRow
+tickers  = manager.load_selected()                 # most-recent row, or [] if none
+```
+
+**Priority:** `load_selected()` → `settings.watchlist` (fallback when no DB entry).
+
+**`scan_candidates()`** uses the same primary/fallback provider pattern as
+`EarningsCalendarAgent`: primary first, fallback on empty or exception.  Filters to
+`EarningsCalendarEntry.is_candidate` (`1 ≤ days_until_report ≤ 31`); results sorted by
+`report_date` ascending.
+
+**Session:** sync SQLAlchemy `Session` (same as `Stage1Repository`).  `save_selection()`
+appends a new row — old rows are retained for audit.
+
+Used by: `NewsIngestorAgent`, `SentimentAnalystAgent`, `EarningsCalendarAgent` (all inject
+it in `__init__`).  Constructed once in `build_pipeline()` (for pipeline agents) and once
+in `main.py` (for cron agents).  The CLI (`cli/select_watchlist.py`) constructs its own
+instance.
 
 ---
 

@@ -1,7 +1,8 @@
 # Dynamic Watchlist Selection — Architecture Spec
 
-**Status:** Planned
+**Status:** Done
 **Date:** 2026-03-30
+**Implemented:** commit `c748597` on branch `claude/review-next-feature-4TiO9`
 
 ---
 

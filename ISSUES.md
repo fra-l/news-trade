@@ -241,6 +241,40 @@ Implements the earnings calendar integration specified in
 
 ---
 
+---
+
+## ~~Dynamic Watchlist Selection~~ ✅ Done
+
+**Priority:** P1 — High
+**Depends on:** Phase 0 Provider Layer (CalendarProvider), Pattern D (Stage1Repository for Phase 2)
+**Branch:** `claude/review-next-feature-4TiO9`
+**Labels:** `feature`, `dx`, `operators`
+
+Adds runtime watchlist management so operators can scan the next 30 days of earnings via an
+interactive CLI and activate tickers without editing `.env` or restarting the process.
+
+### Deliverables
+
+| # | Task | Files |
+|---|------|-------|
+| 1 | `is_candidate` computed field (1–31 day window) | `models/calendar.py` |
+| 2 | `WatchlistSelectionRow` ORM table | `services/tables.py` |
+| 3 | `WatchlistManager` — scan, load, save, get_active_watchlist | `services/watchlist_manager.py` |
+| 4 | `select-watchlist` interactive CLI | `cli/select_watchlist.py`, `cli/__init__.py` |
+| 5 | `select-watchlist` entry point | `pyproject.toml` |
+| 6 | `WatchlistManager` injection in 3 agents | `agents/news_ingestor.py`, `agents/sentiment_analyst.py`, `agents/earnings_calendar.py` |
+| 7 | Pipeline + main wiring | `graph/pipeline.py`, `main.py` |
+| 8 | 18 unit tests + 6 model tests + agent injection tests | `tests/test_watchlist_manager.py`, `tests/test_earnings_calendar.py`, `tests/test_news_ingestor.py` |
+
+### Design decisions
+
+- **Append-only rows** — `save_selection()` never overwrites; each CLI run adds a new `WatchlistSelectionRow`. Audit trail preserved; `load_selected()` reads the most-recent row.
+- **`settings.watchlist` as fallback** — behaviour is identical to before if the CLI is never run. The new capability is fully opt-in.
+- **`watchlist_manager` optional in `EarningsCalendarAgent`** — backward-compatible default `None`; falls back to `settings.watchlist`. Required in `NewsIngestorAgent` and `SentimentAnalystAgent` (always injected in pipeline wiring).
+- **Separate sessions** — `pipeline.py` creates a dedicated `wl_session` for `WatchlistManager` (independent of `shared_session` used by `Stage1Repository`). `main.py` shares `cron_session`.
+
+---
+
 ## Dependency graph
 
 ```
@@ -252,7 +286,9 @@ Implements the earnings calendar integration specified in
 Phase 0 Provider Layer ✅ (depends on #3, #5)
 Pattern B ✅ ──────────► Pattern A ✅
 #10 EarningsCalendarEntry ✅ ──► #11 Calendar providers ✅ ──► #12 EarningsCalendarAgent ✅
+Dynamic Watchlist ✅    (depends on Phase 0 CalendarProvider + Phase 0 tables)
 ```
 
 All patterns (A, B, C, D) and all issues (#10–#27) resolved. Full pipeline
-operational end-to-end. No remaining planned work.
+operational end-to-end. Dynamic watchlist selection complete (Phase 1).
+Phase 2 (per-ticker assessment in CLI) is the only remaining planned enhancement.
