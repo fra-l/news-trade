@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # --- LLM tier configuration ---
     llm_provider: str = Field(
         default="anthropic",
-        description="LLM provider: 'anthropic' only for now; protocol-ready for others",
+        description="LLM provider: 'anthropic' or 'ollama'",
     )
     llm_quick_model: str = Field(
         default="claude-haiku-4-5-20251001",
@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     llm_deep_model: str = Field(
         default="claude-sonnet-4-6",
         description="Accurate model for confidence scoring and signal synthesis",
+    )
+    ollama_base_url: str = Field(
+        default="http://localhost:11434/v1",
+        description="Base URL for Ollama's OpenAI-compatible API",
     )
 
     # --- Alpaca Markets ---
