@@ -9,8 +9,8 @@ Detailed guidance for specific subdirectories is in nested `CLAUDE.md` files —
 ## Project Overview
 
 **news-trade** is a multi-agent, news-driven automated trading system. It ingests financial
-news, classifies sentiment via the Anthropic Claude API, generates trade signals, manages
-risk, and executes orders through Alpaca Markets.
+news, classifies sentiment via an LLM (Anthropic Claude API or local Ollama models), generates
+trade signals, manages risk, and executes orders through Alpaca Markets.
 
 The pipeline is orchestrated with **LangGraph**. Each stage is an independent agent that
 reads from and writes to a shared `PipelineState` TypedDict.
@@ -23,7 +23,7 @@ reads from and writes to a shared `PipelineState` TypedDict.
 |---|---|
 | Language | Python 3.11+ |
 | Agent orchestration | LangGraph |
-| LLM / Sentiment | Anthropic Claude API (`anthropic`) |
+| LLM / Sentiment | Anthropic Claude API (`anthropic`) or Ollama local models (`openai` SDK compat) |
 | Broker | Alpaca Markets (`alpaca-py`) |
 | Data Sources | RSS feeds, Benzinga, yfinance, Polygon.io |
 | Event Bus | Redis async pub/sub |
@@ -71,7 +71,7 @@ src/news_trade/
 ├── services/              # Business logic + persistence → see services/CLAUDE.md
 │   ├── database.py        # Engine + session factory + create_tables()
 │   ├── tables.py          # ORM table definitions (5 tables)
-│   ├── llm_client.py      # LLMClient Protocol, AnthropicLLMClient, LLMClientFactory
+│   ├── llm_client.py      # LLMClient Protocol, AnthropicLLMClient, OllamaLLMClient, LLMClientFactory
 │   ├── estimates_renderer.py  # Deterministic FMP data → narrative formatter
 │   ├── confidence_scorer.py   # 4-component weighted scorer + confidence gate
 │   ├── stage1_repository.py   # Stage 1 position CRUD + outcome reflection (Pattern D)
@@ -127,10 +127,11 @@ to `.env` before running.
 | `NEWS_PROVIDER` | `rss` | `rss` or `benzinga` |
 | `MARKET_DATA_PROVIDER` | `yfinance` | `yfinance`, `polygon_free`, `polygon_paid` |
 | `SENTIMENT_PROVIDER` | `claude` | `claude` or `keyword` |
-| `LLM_PROVIDER` | `anthropic` | LLM backend; `anthropic` only for now |
-| `LLM_QUICK_MODEL` | `claude-haiku-4-5-20251001` | Cheap model for classification / debate rounds |
-| `LLM_DEEP_MODEL` | `claude-sonnet-4-6` | Accurate model for confidence scoring / synthesis |
-| `CLAUDE_DAILY_BUDGET_USD` | `2.00` | Hard cap on Claude API spend per day |
+| `LLM_PROVIDER` | `anthropic` | LLM backend: `anthropic` or `ollama` |
+| `LLM_QUICK_MODEL` | `claude-haiku-4-5-20251001` | Quick model (e.g. `llama3.2:3b` for Ollama) |
+| `LLM_DEEP_MODEL` | `claude-sonnet-4-6` | Deep model (e.g. `llama3.1:8b` for Ollama) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama OpenAI-compatible endpoint (`ollama` provider only) |
+| `CLAUDE_DAILY_BUDGET_USD` | `2.00` | Hard cap on Claude API spend per day (Anthropic only) |
 | `SENTIMENT_DRY_RUN` | `false` | Skip real Claude calls; return neutral |
 | `NEWS_KEYWORD_PREFILTER` | `true` | Pre-filter news by keyword before sentiment |
 | `EARN_BEAT_PCT_THRESHOLD` | `2.0` | EPS % surprise above which event is EARN_BEAT |
@@ -198,6 +199,7 @@ unless absolutely necessary with a comment explaining why.
 | SQLAlchemy ORM + tables | Done |
 | Redis event bus | Done |
 | **LLMClient service — deep/quick split (Pattern B)** | **Done** |
+| **OllamaLLMClient — OpenAI-compatible local LLM backend** | **Done — `openai` SDK pointed at `http://localhost:11434/v1`; function calling for structured output; `LLM_PROVIDER=ollama` to activate** |
 | **EventType fine-grained values** | **Done** |
 | **Surprise models (EstimatesData, MetricSurprise, EarningsSurprise)** | **Done** |
 | **EstimatesRenderer (Pattern C)** | **Done** |
@@ -289,11 +291,13 @@ All PRs must pass `tests.yml` before merging.
 4. **Keyword pre-filter** — `NEWS_KEYWORD_PREFILTER=true` skips Claude for events without
    relevant financial keywords, cutting API spend.
 
-5. **Two-tier LLM routing (Pattern B)** — `LLMClientFactory.quick` (Haiku) for cheap tasks
-   (classification, extraction, non-earnings sentiment); `.deep` (Sonnet) for expensive tasks
+5. **Two-tier LLM routing (Pattern B)** — `LLMClientFactory.quick` for cheap tasks
+   (classification, extraction, non-earnings sentiment); `.deep` for expensive tasks
    (confidence scoring, synthesis, EARN_PRE/BEAT/MISS sentiment). `ClaudeSentimentProvider`
    holds the full factory and selects the tier per event inside `_select_client()` — the
-   agent layer is unchanged. Adding OpenAI/Gemini requires one new class — no agent changes.
+   agent layer is unchanged. Two backends are implemented: `AnthropicLLMClient` (Claude API)
+   and `OllamaLLMClient` (local models via Ollama's OpenAI-compatible endpoint). Adding
+   further providers (OpenAI, Gemini) requires one new class — no agent changes.
 
 6. **Deterministic confidence scoring (Pattern C)** — `EstimatesRenderer` pre-computes
    surprise deltas; `ConfidenceScorer` applies a per-`EventType` weight matrix. No LLM
