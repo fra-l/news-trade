@@ -33,6 +33,9 @@ def get_news_provider(settings: Settings | None = None) -> NewsProvider:
         case NewsProviderType.BENZINGA:
             from news_trade.providers.news.benzinga import BenzingaNewsProvider
             return BenzingaNewsProvider(api_key=cfg.benzinga_api_key)
+        case NewsProviderType.FINNHUB:
+            from news_trade.providers.news.finnhub import FinnhubNewsProvider
+            return FinnhubNewsProvider(api_key=cfg.finnhub_api_key)
         case _:
             from news_trade.providers.news.rss import RSSNewsProvider
             return RSSNewsProvider(watchlist=cfg.watchlist)
@@ -105,5 +108,8 @@ def get_calendar_provider(settings: Settings | None = None) -> CalendarProvider:
     if cfg.fmp_api_key:
         from news_trade.providers.calendar.fmp import FMPCalendarProvider
         return FMPCalendarProvider(api_key=cfg.fmp_api_key)
+    if cfg.finnhub_api_key:
+        from news_trade.providers.calendar.finnhub import FinnhubCalendarProvider
+        return FinnhubCalendarProvider(api_key=cfg.finnhub_api_key)
     from news_trade.providers.calendar.yfinance_provider import YFinanceCalendarProvider
     return YFinanceCalendarProvider()

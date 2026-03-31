@@ -13,6 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class NewsProviderType(StrEnum):
     RSS = "rss"
     BENZINGA = "benzinga"
+    FINNHUB = "finnhub"
 
 
 class MarketDataProviderType(StrEnum):
@@ -75,6 +76,9 @@ class Settings(BaseSettings):
 
     # --- Financial Modeling Prep (earnings calendar + estimates) ---
     fmp_api_key: str = Field(default="", description="Financial Modeling Prep API key")
+
+    # --- Finnhub (news + earnings calendar, free tier) ---
+    finnhub_api_key: str = Field(default="", description="Finnhub API key")
 
     # --- Redis ---
     redis_url: str = Field(
