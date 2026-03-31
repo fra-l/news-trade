@@ -181,6 +181,20 @@ class SignalGeneratorAgent(BaseAgent):
             if signal is None:
                 continue
 
+            _ev = event_lookup.get(signal.event_id)
+            _ev_type = _ev.event_type.value if _ev else "unknown"
+            self.logger.info(
+                "Signal: %-6s  type=%-20s  direction=%-6s  conviction=%.3f  "
+                "conf_score=%.3f  gate=%s%s",
+                signal.ticker,
+                _ev_type,
+                signal.direction.value,
+                signal.conviction,
+                signal.confidence_score or 0.0,
+                "PASS" if signal.passed_confidence_gate else "FAIL",
+                f"  reason={signal.rejection_reason!r}" if not signal.passed_confidence_gate else "",
+            )
+
             if signal.passed_confidence_gate:
                 signal = await self._debate_signal(signal)
 
@@ -226,10 +240,18 @@ class SignalGeneratorAgent(BaseAgent):
             case SentimentLabel.BEARISH | SentimentLabel.VERY_BEARISH:
                 direction = SignalDirection.SHORT
             case _:
+                self.logger.info(
+                    "Signal: %s  label=%s → NEUTRAL, no signal",
+                    sentiment.ticker, sentiment.label.value,
+                )
                 return None
 
         conviction = abs(sentiment.score) * sentiment.confidence
         if conviction < self.settings.min_signal_conviction:
+            self.logger.info(
+                "Signal: %s  conviction=%.3f < threshold=%.3f → skipped",
+                sentiment.ticker, conviction, self.settings.min_signal_conviction,
+            )
             return None
 
         suggested_qty = self._compute_position_size(
@@ -557,6 +579,15 @@ class SignalGeneratorAgent(BaseAgent):
         ):
             return signal
 
+        self.logger.info(
+            "Debate: starting %d-round bull/bear debate for %s  "
+            "conviction=%.3f  conf_score=%.3f",
+            self.settings.signal_debate_rounds,
+            signal.ticker,
+            signal.conviction,
+            signal.confidence_score or 0.0,
+        )
+
         history: list[DebateRound] = []
         for round_n in range(self.settings.signal_debate_rounds):
             bull_resp = await self._llm.quick.invoke(
@@ -572,6 +603,16 @@ class SignalGeneratorAgent(BaseAgent):
                     bear_argument=bear_resp.content,
                 )
             )
+            self.logger.info(
+                "Debate: %s  round=%d/%d\n"
+                "  BULL: %s\n"
+                "  BEAR: %s",
+                signal.ticker,
+                round_n + 1,
+                self.settings.signal_debate_rounds,
+                bull_resp.content,
+                bear_resp.content,
+            )
 
         verdict_resp = await self._llm.deep.invoke(
             _build_synthesis_prompt(signal, history),
@@ -582,6 +623,13 @@ class SignalGeneratorAgent(BaseAgent):
             verdict=parsed.verdict,
             confidence_delta=parsed.confidence_delta,
             rounds=history,
+        )
+        self.logger.info(
+            "Debate: %s  verdict=%s  confidence_delta=%+.3f  reasoning=%r",
+            signal.ticker,
+            parsed.verdict.value,
+            parsed.confidence_delta,
+            parsed.reasoning,
         )
 
         new_score = (signal.confidence_score or 0.0) + result.confidence_delta

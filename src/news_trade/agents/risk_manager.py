@@ -84,15 +84,18 @@ class RiskManagerAgent(BaseAgent):
 
             if not passed:
                 self.logger.warning(
-                    "Signal %s for %s REJECTED: %s",
-                    signal.signal_id,
+                    "Risk: %-6s  REJECTED  reason=%r  "
+                    "direction=%s  qty=%d  conf_score=%.3f",
                     signal.ticker,
                     reason,
+                    signal.direction.value,
+                    signal.suggested_qty,
+                    signal.confidence_score or 0.0,
                 )
                 if self.settings.risk_dry_run:
                     self.logger.warning(
-                        "risk_dry_run=True — approving %s despite rejection: %s",
-                        signal.signal_id,
+                        "Risk: %-6s  risk_dry_run=True — approving despite rejection: %s",
+                        signal.ticker,
                         reason,
                     )
                     approved.append(signal)
@@ -110,10 +113,13 @@ class RiskManagerAgent(BaseAgent):
                 # L3b — apply size cap (modify, not reject) on approved signals.
                 signal = self._apply_size_cap(signal, portfolio)
                 self.logger.info(
-                    "Signal %s for %s APPROVED (size=%s)",
-                    signal.signal_id,
+                    "Risk: %-6s  APPROVED  direction=%s  qty=%d  "
+                    "conf_score=%.3f  checks=%s",
                     signal.ticker,
+                    signal.direction.value,
                     signal.suggested_qty,
+                    signal.confidence_score or 0.0,
+                    validation.checks_run if validation else [],
                 )
                 approved.append(signal)
 

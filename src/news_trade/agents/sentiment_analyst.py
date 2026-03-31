@@ -64,8 +64,18 @@ class SentimentAnalystAgent(BaseAgent):
             existing = state.get("errors") or []
             return {"sentiment_results": [], "errors": [*existing, str(exc)]}
 
+        for r in results:
+            self.logger.info(
+                "Sentiment: %-6s  label=%-14s  score=%+.2f  conf=%.2f  reasoning=%r",
+                r.ticker,
+                r.label.value,
+                r.score,
+                r.confidence,
+                (r.reasoning or "")[:120],
+            )
+
         self.logger.info(
-            "Scored %d events → %d results via %s",
+            "Sentiment: scored %d events → %d results via %s",
             len(news_events),
             len(results),
             self._provider.name,

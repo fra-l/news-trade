@@ -65,15 +65,24 @@ class NewsIngestorAgent(BaseAgent):
         Returns:
             ``{"news_events": [NewsEvent, ...]}``
         """
+        watchlist = self._watchlist_manager.get_active_watchlist()
+        self.logger.info("NewsIngestor: active watchlist=%s", watchlist)
+
         try:
             candidates = await self._provider.fetch(
-                tickers=self._watchlist_manager.get_active_watchlist(),
+                tickers=watchlist,
                 since=state.get("last_poll"),
             )
         except Exception as exc:  # noqa: BLE001
             self.logger.error("News fetch failed: %s", exc)
             existing = state.get("errors") or []
             return {"news_events": [], "errors": [*existing, str(exc)]}
+
+        self.logger.debug(
+            "NewsIngestor: fetched %d candidate events from %s",
+            len(candidates),
+            self._provider.name,  # type: ignore[attr-defined]
+        )
 
         new_events: list[NewsEvent] = []
         seen_in_batch: set[str] = set()
@@ -89,6 +98,12 @@ class NewsIngestorAgent(BaseAgent):
                 seen_in_batch.add(event.event_id)
                 self._persist(event, session)
                 new_events.append(event)
+                self.logger.info(
+                    "NewsIngestor: new event  ticker=%s  type=%-20s  headline=%r",
+                    event.tickers,
+                    event.event_type.value,
+                    event.headline[:120],
+                )
             session.commit()
 
         for event in new_events:
@@ -99,7 +114,12 @@ class NewsIngestorAgent(BaseAgent):
                     "Failed to publish event %s: %s", event.event_id, exc
                 )
 
-        self.logger.info("Ingested %d new events", len(new_events))
+        self.logger.info(
+            "NewsIngestor: ingested %d new events (candidates=%d, filtered=%d)",
+            len(new_events),
+            len(candidates),
+            len(candidates) - len(new_events),
+        )
         return {"news_events": new_events}
 
     def _matches_watchlist(self, tickers: list[str]) -> bool:

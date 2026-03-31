@@ -34,6 +34,8 @@ class MarketDataAgent(BaseAgent):
             self.logger.debug("No tickers to fetch market data for")
             return {"market_context": {}}
 
+        self.logger.info("MarketData: fetching data for tickers=%s via %s", tickers, self._provider.name)
+
         try:
             snapshots = await self._provider.get_snapshots(tickers)
         except Exception as exc:  # noqa: BLE001
@@ -41,9 +43,19 @@ class MarketDataAgent(BaseAgent):
             existing = state.get("errors") or []
             return {"market_context": {}, "errors": [*existing, str(exc)]}
 
+        for ticker, snap in snapshots.items():
+            self.logger.info(
+                "MarketData: %-6s  close=%.2f  vol_20d=%.4f  vol_5d=%.4f",
+                ticker,
+                snap.latest_close,
+                snap.volatility_20d,
+                snap.volatility_5d,
+            )
+
         self.logger.info(
-            "Fetched market data for %d tickers via %s",
+            "MarketData: fetched %d/%d tickers via %s",
             len(snapshots),
+            len(tickers),
             self._provider.name,
         )
         return {"market_context": snapshots}
