@@ -68,4 +68,11 @@ def create_tables(settings: Settings) -> None:
     After stamping, ``upgrade head`` will see no pending revisions and become
     a no-op on every subsequent startup. See DEPLOY.md for the full procedure.
     """
+    # Ensure the SQLite parent directory exists before Alembic opens the file.
+    # build_engine() does this too, but Alembic's env.py creates its own engine
+    # directly from the URL and would fail if the directory is missing.
+    url = settings.database_url
+    if url.startswith("sqlite:///"):
+        db_path = url.removeprefix("sqlite:///")
+        os.makedirs(Path(db_path).parent, exist_ok=True)
     command.upgrade(_make_alembic_config(settings), "head")
