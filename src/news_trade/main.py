@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import subprocess
@@ -45,7 +46,7 @@ async def run_cycle(pipeline, initial_state: PipelineState) -> PipelineState:
     return result
 
 
-async def main() -> None:
+async def main(run_once: bool = False) -> None:
     """Start the trading system and loop on the configured poll interval."""
     settings = get_settings()
 
@@ -166,6 +167,10 @@ async def main() -> None:
             else:
                 logger.info("Cycle complete — no orders placed")
 
+            if run_once:
+                logger.info("--once flag set — exiting after single cycle")
+                break
+
             await asyncio.sleep(settings.news_poll_interval_sec)
 
     except KeyboardInterrupt:
@@ -177,7 +182,14 @@ async def main() -> None:
 
 def entrypoint() -> None:
     """Console-script entrypoint (see pyproject.toml)."""
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="news-trade pipeline")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single pipeline cycle then exit (debug mode)",
+    )
+    args = parser.parse_args()
+    asyncio.run(main(run_once=args.once))
 
 
 if __name__ == "__main__":

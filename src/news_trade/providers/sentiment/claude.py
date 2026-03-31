@@ -223,7 +223,7 @@ def _parse_response(
                 SentimentResult(
                     event_id=event.event_id,
                     ticker=item["ticker"],
-                    label=SentimentLabel(item["label"]),
+                    label=SentimentLabel(item["label"].lower()),
                     score=float(item["score"]),
                     confidence=float(item["confidence"]),
                     reasoning=item.get("reasoning", ""),

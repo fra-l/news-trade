@@ -163,6 +163,7 @@ docker compose up -d             # Start Redis
 
 # Run
 uv run news-trade                # Start the main polling loop
+uv run news-trade --once         # Run a single cycle and exit (debug mode)
 
 # Quality
 uv run ruff check src/ tests/    # Lint (rules: E, F, I, N, UP, B, SIM, RUF)
