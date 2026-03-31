@@ -27,7 +27,7 @@ reads from and writes to a shared `PipelineState` TypedDict.
 | Broker | Alpaca Markets (`alpaca-py`) |
 | Data Sources | RSS feeds, Benzinga, yfinance, Polygon.io |
 | Event Bus | Redis async pub/sub |
-| Database | SQLite (default) via SQLAlchemy ORM |
+| Database | SQLite (default) via SQLAlchemy ORM + **Alembic** migrations |
 | Validation | Pydantic v2 |
 | Linting | ruff |
 | Type checking | mypy (strict) |
@@ -53,9 +53,16 @@ conventions, patterns, and status information that would otherwise clutter this 
 ## Repository Layout
 
 ```
+alembic/                   # Alembic migration environment + versioned schema migrations
+├── env.py                 # Runtime env: injects DATABASE_URL, wires Base.metadata
+├── script.py.mako         # Migration file template
+└── versions/              # One file per migration (e.g. initial_schema, add_foo_column)
+alembic.ini                # Alembic config — sqlalchemy.url is always empty (set at runtime)
+DEPLOY.md                  # Operator runbook: alembic stamp head, safe switch windows
+
 src/news_trade/
 ├── config.py              # Pydantic Settings — all env vars (see Configuration below)
-├── main.py                # Entrypoint: builds pipeline, runs polling loop
+├── main.py                # Entrypoint: builds pipeline, runs polling loop (logs version banner)
 ├── agents/                # LangGraph agent nodes + cron agents — see agents/CLAUDE.md
 ├── graph/
 │   ├── state.py           # PipelineState TypedDict
@@ -69,8 +76,8 @@ src/news_trade/
 │   ├── sentiment/         # ClaudeSentimentProvider (budget-capped), KeywordSentimentProvider
 │   └── calendar/          # FMPCalendarProvider (primary), YFinanceCalendarProvider (fallback)
 ├── services/              # Business logic + persistence → see services/CLAUDE.md
-│   ├── database.py        # Engine + session factory + create_tables()
-│   ├── tables.py          # ORM table definitions (5 tables)
+│   ├── database.py        # Engine + session factory + create_tables() [runs alembic upgrade head]
+│   ├── tables.py          # ORM table definitions (6 tables)
 │   ├── llm_client.py      # LLMClient Protocol, AnthropicLLMClient, OllamaLLMClient, LLMClientFactory
 │   ├── estimates_renderer.py  # Deterministic FMP data → narrative formatter
 │   ├── confidence_scorer.py   # 4-component weighted scorer + confidence gate
@@ -163,6 +170,13 @@ uv run ruff format src/ tests/   # Auto-format
 uv run mypy src/                 # Strict type checking — no implicit Any
 uv run pytest                    # Full test suite
 uv run pytest -x                 # Stop at first failure
+
+# Database migrations (Alembic)
+uv run alembic upgrade head                          # Apply all pending migrations (also runs at startup)
+uv run alembic revision --autogenerate -m "name"     # Generate migration after editing tables.py
+uv run alembic stamp head                            # Mark existing DB as current (first deploy only)
+uv run alembic current                               # Show running revision
+uv run alembic history                               # List all migrations
 ```
 
 Always run `ruff check` before committing. Fix all errors; do not suppress with `# noqa`
@@ -229,6 +243,8 @@ unless absolutely necessary with a comment explaining why.
 | **FMPEstimatesProvider + EstimatesProvider Protocol** | **Done — fetches historical EPS beat rates from FMP earnings-surprises endpoint; three-tier fallback in `_handle_earn_pre()`: observed → FMP → static default; injected into EarningsCalendarAgent** |
 | **`HaltHandlerAgent` — drawdown emergency cleanup node** | **Done — cancels all Alpaca orders, closes all positions, expires OPEN Stage1 positions; wired as `halt_handler` node after `RiskManagerAgent` via `_route_after_risk()` 3-way router** |
 | **Dynamic Watchlist Selection** | **Done — `WatchlistManager` service + `select-watchlist` CLI; `WatchlistSelectionRow` ORM table; `is_candidate` computed field on `EarningsCalendarEntry`; injected into `NewsIngestorAgent`, `SentimentAnalystAgent`, `EarningsCalendarAgent`** |
+| **Alembic schema migrations** | **Done — `create_tables()` runs `alembic upgrade head` programmatically on every startup; `alembic/versions/6dae9e7efe75_initial_schema.py` captures all 6 tables; `DEPLOY.md` documents the `alembic stamp head` first-deploy procedure** |
+| **Version logging** | **Done — `main.py` logs `version`, short git commit hash, Python version, and `DATABASE_URL` at startup** |
 
 The full pipeline is now operational end-to-end for all event types. `SignalGeneratorAgent`
 implements the complete EARN_\* two-stage logic (Pattern D): EARN_PRE sizes from the
@@ -262,6 +278,7 @@ relies solely on the static 0.65 default; once ≥4 own quarters are observed th
 
 **Remaining work (non-blocking enhancements):**
 - Dynamic Watchlist Phase 2 — per-ticker assessment in `select-watchlist` (sector, 52-week return, analyst consensus, historical beat rate; CLI-only, no pipeline changes).
+- Bump `pyproject.toml` version and add a git tag when cutting a release; see `DEPLOY.md` for the switch window and migration procedure.
 
 ---
 

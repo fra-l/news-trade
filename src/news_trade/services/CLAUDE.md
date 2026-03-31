@@ -118,7 +118,9 @@ repo = Stage1Repository(session)   # takes sync SQLAlchemy Session
 ## `tables.py` — ORM Table Definitions
 
 All tables inherit `Base` (DeclarativeBase). `create_tables(settings)` in `database.py`
-calls `Base.metadata.create_all()` — no Alembic, safe to call on every startup.
+calls `alembic upgrade head` programmatically — **Alembic is the schema authority**.
+Do not call `Base.metadata.create_all()` in production code; it bypasses Alembic.
+For tests, use `Base.metadata.create_all(engine)` directly on an in-memory engine (intentional).
 
 | Table | PK Type | Key Design Note |
 |---|---|---|
@@ -169,16 +171,31 @@ instance.
 
 ---
 
-## `database.py` — Session Factory
+## `database.py` — Engine, Session Factory, and Migrations
 
 ```python
 engine  = build_engine(settings)
 factory = build_session_factory(settings)   # sessionmaker[Session]
-create_tables(settings)                     # idempotent — safe at startup
+create_tables(settings)                     # runs alembic upgrade head — call once at startup
 ```
 
-SQLite parent directories are created automatically if they don't exist.
-For tests, use `create_engine("sqlite:///:memory:")` + `Base.metadata.create_all(engine)`.
+`create_tables()` uses the Python Alembic API (`alembic.command.upgrade`) — no subprocess.
+`_make_alembic_config(settings)` locates `alembic.ini` relative to `database.py` at
+`Path(__file__).parents[3] / "alembic.ini"` (project root).
+
+SQLite parent directories are created automatically by `build_engine()` if they don't exist.
+
+**Schema changes:** edit `tables.py`, then run:
+```bash
+uv run alembic revision --autogenerate -m "describe_change"
+```
+Review the generated file in `alembic/versions/`, then commit. The next startup applies it.
+
+**First deploy (existing pre-Alembic database):** run `uv run alembic stamp head` once before
+restarting. See `DEPLOY.md` for the full procedure.
+
+For tests, use `create_engine("sqlite:///:memory:")` + `Base.metadata.create_all(engine)`
+directly (intentional bypass of Alembic — keeps tests fast and migration-file independent).
 
 ---
 

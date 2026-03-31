@@ -92,7 +92,7 @@ SentimentAnalystAgent ←── SentimentProvider (claude | keyword)
 - **RSS / Benzinga / Polygon.io** — news ingestion (switchable)
 - **yfinance / Polygon.io** — market data (switchable)
 - **Redis** — inter-agent event bus (pub/sub)
-- **SQLite + SQLAlchemy** — trade logging and signal history
+- **SQLite + SQLAlchemy + Alembic** — trade logging, signal history, and versioned schema migrations
 - **Pydantic v2** — data validation across all agent boundaries
 
 ## Quick Start
@@ -181,6 +181,10 @@ uv run mypy src/
 
 # Test
 uv run pytest
+
+# Migrations (after editing src/news_trade/services/tables.py)
+uv run alembic revision --autogenerate -m "describe_change"
+uv run alembic upgrade head   # also runs automatically on every startup
 ```
 
 ## Project Layout
