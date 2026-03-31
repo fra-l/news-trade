@@ -45,11 +45,11 @@ class MarketDataAgent(BaseAgent):
 
         for ticker, snap in snapshots.items():
             self.logger.info(
-                "MarketData: %-6s  close=%.2f  vol_20d=%.4f  vol_5d=%.4f",
+                "MarketData: %-6s  close=%.2f  vol_20d=%.4f  atr_14d=%s",
                 ticker,
                 snap.latest_close,
                 snap.volatility_20d,
-                snap.volatility_5d,
+                f"{snap.atr_14d:.4f}" if snap.atr_14d is not None else "n/a",
             )
 
         self.logger.info(
