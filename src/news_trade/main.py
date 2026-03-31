@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
 import sys
 
 from alpaca.trading.client import TradingClient
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from news_trade import __version__
 from news_trade.agents.earnings_calendar import EarningsCalendarAgent
 from news_trade.agents.execution import ExecutionAgent
 from news_trade.agents.expiry_scanner import ExpiryScanner
@@ -24,7 +26,6 @@ from news_trade.services.database import (
 )
 from news_trade.services.event_bus import EventBus
 from news_trade.services.stage1_repository import Stage1Repository
-from news_trade.services.tables import Base
 from news_trade.services.watchlist_manager import WatchlistManager
 
 logging.basicConfig(
@@ -47,6 +48,24 @@ async def run_cycle(pipeline, initial_state: PipelineState) -> PipelineState:
 async def main() -> None:
     """Start the trading system and loop on the configured poll interval."""
     settings = get_settings()
+
+    try:
+        _git_hash = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.SubprocessError, FileNotFoundError):
+        _git_hash = "unknown"
+
+    logger.info(
+        "news-trade starting  version=%s  commit=%s  python=%s  db=%s",
+        __version__,
+        _git_hash,
+        sys.version.split()[0],
+        settings.database_url,
+    )
+
     event_bus = EventBus(settings)
     await event_bus.connect()
 
@@ -60,7 +79,6 @@ async def main() -> None:
     # Cron agents — run outside the LangGraph pipeline on a daily schedule
     # ------------------------------------------------------------------
     cron_engine = build_engine(settings)
-    Base.metadata.create_all(cron_engine)
     cron_session = build_session_factory(settings)()
     cron_stage1_repo = Stage1Repository(cron_session)
 

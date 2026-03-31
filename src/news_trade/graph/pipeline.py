@@ -27,12 +27,11 @@ from news_trade.providers import (
 )
 from news_trade.providers.calendar.yfinance_provider import YFinanceCalendarProvider
 from news_trade.services.confidence_scorer import ConfidenceScorer
-from news_trade.services.database import build_engine, build_session_factory
+from news_trade.services.database import build_session_factory
 from news_trade.services.estimates_renderer import EstimatesRenderer
 from news_trade.services.event_bus import EventBus
 from news_trade.services.llm_client import LLMClientFactory
 from news_trade.services.stage1_repository import Stage1Repository
-from news_trade.services.tables import Base
 from news_trade.services.watchlist_manager import WatchlistManager
 
 # Node name constants
@@ -73,8 +72,6 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     """
     # WatchlistManager — shared across the three watchlist-reading agents.
     # Uses a separate session from stage1_repo to avoid state bleed.
-    wl_engine = build_engine(settings)
-    Base.metadata.create_all(wl_engine)
     wl_session = build_session_factory(settings)()
     wl_manager = WatchlistManager(
         settings=settings,
@@ -100,8 +97,6 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     )
 
     # Shared DB session for Stage1Repository (used by SignalGenerator + RiskManager).
-    shared_engine = build_engine(settings)
-    Base.metadata.create_all(shared_engine)
     shared_session = build_session_factory(settings)()
     stage1_repo = Stage1Repository(shared_session)
 
@@ -121,8 +116,6 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
         secret_key=settings.alpaca_secret_key,
         paper=True,
     )
-    exec_engine = build_engine(settings)
-    Base.metadata.create_all(exec_engine)
     exec_session = build_session_factory(settings)()
     exec_agent = ExecutionAgent(
         settings,
