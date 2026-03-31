@@ -87,7 +87,7 @@ SentimentAnalystAgent ←── SentimentProvider (claude | keyword)
 
 - **Python 3.11+**
 - **LangGraph** — multi-agent orchestration via state graph
-- **Anthropic Claude API** — two-tier LLM routing via `LLMClientFactory`: Haiku for cheap tasks, Sonnet for deep reasoning
+- **Anthropic Claude API** or **Ollama** (local) — two-tier LLM routing via `LLMClientFactory`: quick model for cheap tasks, deep model for reasoning; switch with `LLM_PROVIDER=ollama`
 - **Alpaca Markets API** — paper trading execution
 - **RSS / Benzinga / Polygon.io** — news ingestion (switchable)
 - **yfinance / Polygon.io** — market data (switchable)
@@ -132,9 +132,17 @@ SENTIMENT_PROVIDER=claude
 ### LLM tier configuration
 
 ```env
-LLM_PROVIDER=anthropic                   # 'anthropic' only for now
+# Anthropic (default)
+LLM_PROVIDER=anthropic
 LLM_QUICK_MODEL=claude-haiku-4-5-20251001  # cheap/fast: classification, debate rounds
 LLM_DEEP_MODEL=claude-sonnet-4-6           # accurate: confidence scoring, synthesis
+
+# Ollama — free local alternative (requires ollama running locally)
+# ollama pull llama3.2:3b && ollama pull llama3.1:8b
+# LLM_PROVIDER=ollama
+# LLM_QUICK_MODEL=llama3.2:3b
+# LLM_DEEP_MODEL=llama3.1:8b
+# OLLAMA_BASE_URL=http://localhost:11434/v1   # default; override for remote Ollama
 ```
 
 ### Cost controls
@@ -221,7 +229,7 @@ src/news_trade/
 │   ├── estimates_renderer.py # EstimatesRenderer — FMP estimates → structured narrative
 │   ├── confidence_scorer.py  # ConfidenceScorer — 4-component weighted scorer + gate
 │   ├── event_bus.py          # Redis pub/sub wrapper
-│   └── llm_client.py         # LLMClient Protocol, AnthropicLLMClient, LLMClientFactory
+│   └── llm_client.py         # LLMClient Protocol, AnthropicLLMClient, OllamaLLMClient, LLMClientFactory
 └── graph/
     ├── state.py           # PipelineState TypedDict
     └── pipeline.py        # LangGraph StateGraph builder

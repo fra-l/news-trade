@@ -11,7 +11,7 @@ All services receive dependencies via constructor injection.
 |---|---|---|
 | `database.py` | — | Engine + session factory + `create_tables()` |
 | `tables.py` | `Base`, 6 ORM classes | SQLAlchemy table definitions |
-| `llm_client.py` | `LLMClient` (Protocol), `AnthropicLLMClient`, `LLMClientFactory` | Two-tier LLM routing |
+| `llm_client.py` | `LLMClient` (Protocol), `AnthropicLLMClient`, `OllamaLLMClient`, `LLMClientFactory` | Two-tier LLM routing; `anthropic` or `ollama` backend |
 | `estimates_renderer.py` | `EstimatesRenderer` | Deterministic FMP data → narrative formatter |
 | `confidence_scorer.py` | `ConfidenceScorer` | 4-component weighted confidence scoring + gate |
 | `stage1_repository.py` | `Stage1Repository` | Stage 1 position CRUD + outcome reflection |
@@ -24,18 +24,26 @@ All services receive dependencies via constructor injection.
 
 ```python
 factory = LLMClientFactory(settings)
-factory.quick   # AnthropicLLMClient(haiku) — cheap, fast
-factory.deep    # AnthropicLLMClient(sonnet) — accurate, slower
+factory.quick   # AnthropicLLMClient(haiku) or OllamaLLMClient(llama3.2:3b) — cheap, fast
+factory.deep    # AnthropicLLMClient(sonnet) or OllamaLLMClient(llama3.1:8b) — accurate, slower
 ```
 
 **Route to `quick`:** event_type classification, ticker extraction, dedup checks, debate rounds,
 non-earnings sentiment (M&A, guidance, macro, analyst ratings, EARN_MIXED).
 **Route to `deep`:** confidence scoring, debate verdict, EARN_PRE / EARN_BEAT / EARN_MISS sentiment.
 
-`LLMClient.invoke()` is `async`. Pass `response_schema=MyModel` to get structured JSON output
-(Anthropic tool-use internally). Every response includes `model_id` and `provider` for provenance.
+`LLMClient.invoke()` is `async`. Pass `response_schema=MyModel` to get structured JSON output.
+- **Anthropic** uses tool-use to force the schema.
+- **Ollama** uses OpenAI-compatible function calling (`tools` + `tool_choice`) via the `openai` SDK
+  pointed at `http://localhost:11434/v1`. Requires a model that supports function calling
+  (Llama 3.1+, Qwen 2.5, Mistral).
 
-Adding a second LLM provider requires one new class satisfying `LLMClient` Protocol +
+Every response includes `model_id` and `provider` for provenance.
+
+**Backend selection** is driven by `settings.llm_provider` (`"anthropic"` or `"ollama"`).
+`settings.ollama_base_url` overrides the Ollama endpoint (default `http://localhost:11434/v1`).
+
+Adding a third LLM provider requires one new class satisfying `LLMClient` Protocol +
 one `case` in `_build_client()`. Zero agent changes required.
 
 ---
