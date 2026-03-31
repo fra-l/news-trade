@@ -19,8 +19,7 @@ from datetime import date, timedelta
 from news_trade.config import get_settings
 from news_trade.providers import get_calendar_provider
 from news_trade.providers.calendar.yfinance_provider import YFinanceCalendarProvider
-from news_trade.services.database import build_engine, build_session_factory
-from news_trade.services.tables import Base
+from news_trade.services.database import build_session_factory
 from news_trade.services.watchlist_manager import WatchlistManager
 
 _SCAN_DAYS = 30
@@ -44,8 +43,6 @@ async def main() -> None:
     """Entry point for ``select-watchlist``."""
     settings = get_settings()
 
-    engine = build_engine(settings)
-    Base.metadata.create_all(engine)
     session = build_session_factory(settings)()
 
     manager = WatchlistManager(

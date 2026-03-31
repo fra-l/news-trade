@@ -21,7 +21,7 @@ from news_trade.models.events import EventType, NewsEvent
 from news_trade.models.surprise import EstimatesData
 from news_trade.providers.base import CalendarProvider, EstimatesProvider
 from news_trade.services.event_bus import EventBus
-from news_trade.services.tables import Base, NewsEventRow
+from news_trade.services.tables import NewsEventRow
 from news_trade.services.watchlist_manager import WatchlistManager
 
 _SCAN_DAYS_AHEAD = 5
@@ -55,7 +55,6 @@ class EarningsCalendarAgent(BaseAgent):
         self._engine = engine
         self._estimates_provider = estimates_provider
         self._watchlist_manager = watchlist_manager
-        Base.metadata.create_all(self._engine)
 
     async def run(self, state: dict) -> dict:  # type: ignore[type-arg]
         """Scan the earnings calendar and return synthesised EARN_PRE events.

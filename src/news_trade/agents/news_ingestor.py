@@ -10,7 +10,7 @@ from news_trade.models import NewsEvent
 from news_trade.models.events import EventType
 from news_trade.providers.base import NewsProvider
 from news_trade.services.database import build_engine
-from news_trade.services.tables import Base, NewsEventRow
+from news_trade.services.tables import NewsEventRow
 from news_trade.services.watchlist_manager import WatchlistManager
 
 # Ordered from most-specific to least-specific to avoid false matches
@@ -58,7 +58,6 @@ class NewsIngestorAgent(BaseAgent):
         self._provider = provider
         self._watchlist_manager = watchlist_manager
         self._engine = build_engine(settings)
-        Base.metadata.create_all(self._engine)
 
     async def run(self, state: dict) -> dict:  # type: ignore[override]
         """Fetch latest news and return new events.

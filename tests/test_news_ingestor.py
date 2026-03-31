@@ -59,7 +59,10 @@ def agent(mock_provider, mock_watchlist_manager):
     with patch("news_trade.agents.news_ingestor.build_engine") as mock_engine_factory:
         from sqlalchemy import create_engine
 
+        from news_trade.services.tables import Base
+
         engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
         mock_engine_factory.return_value = engine
         a = NewsIngestorAgent(
             settings, event_bus, provider=mock_provider,
