@@ -1,10 +1,16 @@
-"""RSSNewsProvider — fetches news from Yahoo Finance, MarketWatch, and EDGAR RSS feeds.
+"""RSSNewsProvider — fetches news from yfinance, MarketWatch, and EDGAR RSS feeds.
 
 Phase 1 free-tier news source.  No API key required.
+
+Note: Yahoo Finance shut down their per-ticker RSS endpoint
+(feeds.finance.yahoo.com) circa 2024.  Per-ticker news is now fetched via
+the yfinance library's Ticker.news property, which uses Yahoo's unofficial
+JSON API and remains functional.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -17,8 +23,7 @@ from news_trade.models.events import EventType, NewsEvent
 
 _logger = logging.getLogger(__name__)
 
-# RSS feed templates — {ticker} is replaced at runtime where applicable
-_YAHOO_RSS = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
+# Global RSS feeds (still operational)
 _MARKETWATCH_RSS = "https://feeds.marketwatch.com/marketwatch/realtimeheadlines/"
 _EDGAR_RSS = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&dateb=&owner=include&count=40&search_text=&output=atom"
 
@@ -87,22 +92,19 @@ class RSSNewsProvider:
         events: list[NewsEvent] = []
         seen_ids: set[str] = set()
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            # Per-ticker Yahoo Finance feeds
-            for ticker in tickers:
-                try:
-                    resp = await client.get(_YAHOO_RSS.format(ticker=ticker))
-                    resp.raise_for_status()
-                    items = _parse_rss_feed(resp.text, source="rss_yahoo")
-                    for item in items:
-                        if item.event_id not in seen_ids:
-                            seen_ids.add(item.event_id)
-                            if not item.tickers:
-                                item = item.model_copy(update={"tickers": [ticker]})
-                            events.append(item)
-                except httpx.HTTPError as exc:
-                    _logger.warning("Yahoo RSS fetch failed for %s: %s", ticker, exc)
+        # Per-ticker news via yfinance (replaces dead Yahoo RSS per-ticker endpoint)
+        for ticker in tickers:
+            try:
+                raw_news = await asyncio.to_thread(_fetch_yfinance_news, ticker)
+                for article in raw_news:
+                    item = _yfinance_article_to_event(article, ticker)
+                    if item is not None and item.event_id not in seen_ids:
+                        seen_ids.add(item.event_id)
+                        events.append(item)
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning("yfinance news fetch failed for %s: %s", ticker, exc)
 
+        async with httpx.AsyncClient(timeout=15.0) as client:
             # Global MarketWatch feed — extract tickers from headlines
             try:
                 resp = await client.get(_MARKETWATCH_RSS)
@@ -125,6 +127,59 @@ class RSSNewsProvider:
             events = [e for e in events if e.published_at >= since]
 
         return events
+
+
+def _fetch_yfinance_news(ticker: str) -> list[dict]:
+    """Synchronous yfinance call — run via asyncio.to_thread."""
+    import yfinance as yf  # type: ignore[import-untyped]  # lazy import
+    return yf.Ticker(ticker).news or []
+
+
+def _yfinance_article_to_event(article: dict, ticker: str) -> NewsEvent | None:
+    """Convert a yfinance news dict to a NewsEvent.
+
+    yfinance >=0.2.50 nests article data under a ``content`` key.
+    Older flat format (``title``, ``link``, ``providerPublishTime``) is
+    also supported as a fallback.
+    """
+    # New nested format (yfinance >=0.2.50)
+    content: dict = article.get("content") or article
+
+    title = content.get("title", "").strip()
+    if not title:
+        return None
+
+    uid = article.get("id") or content.get("id") or content.get("canonicalUrl", {}).get("url") or title
+    summary = content.get("summary") or ""
+
+    # Publisher
+    provider = content.get("provider") or {}
+    source = provider.get("displayName") or content.get("publisher") or "yfinance_news"
+
+    # URL
+    canon = content.get("canonicalUrl") or content.get("clickThroughUrl") or {}
+    url = canon.get("url") or content.get("link") or ""
+
+    # Published timestamp — ISO string (new) or Unix int (old)
+    pub_date_str = content.get("pubDate")
+    pub_ts = content.get("providerPublishTime")
+    if pub_date_str:
+        published_at = _parse_dt(pub_date_str)
+    elif pub_ts:
+        published_at = datetime.fromtimestamp(int(pub_ts), tz=timezone.utc)
+    else:
+        published_at = datetime.now(timezone.utc)
+
+    return NewsEvent(
+        event_id=f"yfinance_news:{uid}",
+        headline=title,
+        summary=summary,
+        source=source,
+        url=url,
+        tickers=[ticker],
+        event_type=_classify(title),
+        published_at=published_at,
+    )
 
 
 def _parse_rss_feed(xml_text: str, source: str) -> list[NewsEvent]:
