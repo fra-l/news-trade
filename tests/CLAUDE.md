@@ -91,6 +91,19 @@ def _make_session() -> Session:
 Call `_make_session()` in `setup_method` so each test gets an isolated empty database.
 Never share sessions across tests.
 
+**Agent fixture pattern:** agents no longer call `Base.metadata.create_all()` in their
+`__init__` (Alembic is now the schema authority in production). Test fixtures that
+patch `build_engine` must call `Base.metadata.create_all(engine)` themselves before
+constructing the agent:
+
+```python
+with patch("news_trade.agents.news_ingestor.build_engine") as mock_engine_factory:
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)          # ← required; agent no longer does this
+    mock_engine_factory.return_value = engine
+    agent = NewsIngestorAgent(...)
+```
+
 ---
 
 ## Async Tests
