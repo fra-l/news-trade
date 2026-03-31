@@ -24,7 +24,7 @@ from news_trade.models.events import EventType, NewsEvent
 _logger = logging.getLogger(__name__)
 
 # Global RSS feeds (still operational)
-_MARKETWATCH_RSS = "https://feeds.marketwatch.com/marketwatch/realtimeheadlines/"
+_MARKETWATCH_RSS = "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"
 _EDGAR_RSS = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&dateb=&owner=include&count=40&search_text=&output=atom"
 
 _KEYWORD_MAP: list[tuple[frozenset[str], EventType]] = [
