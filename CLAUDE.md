@@ -164,6 +164,8 @@ docker compose up -d             # Start Redis
 # Run
 uv run news-trade                # Start the main polling loop
 uv run news-trade --once         # Run a single cycle and exit (debug mode)
+uv run news-trade --replay-ticker AAPL            # Replay last 5 stored AAPL articles (implies --once)
+uv run news-trade --replay-ticker AAPL --replay-limit 10  # Replay last 10 stored articles
 
 # Quality
 uv run ruff check src/ tests/    # Lint (rules: E, F, I, N, UP, B, SIM, RUF)

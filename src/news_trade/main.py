@@ -10,14 +10,17 @@ import sys
 
 from alpaca.trading.client import TradingClient
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from news_trade import __version__
 from news_trade.agents.earnings_calendar import EarningsCalendarAgent
 from news_trade.agents.execution import ExecutionAgent
 from news_trade.agents.expiry_scanner import ExpiryScanner
-from news_trade.config import get_settings
+from news_trade.config import Settings, get_settings
 from news_trade.graph.pipeline import build_pipeline
 from news_trade.graph.state import PipelineState
+from news_trade.models.events import EventType, NewsEvent
 from news_trade.providers import get_calendar_provider, get_estimates_provider
 from news_trade.providers.calendar.yfinance_provider import YFinanceCalendarProvider
 from news_trade.services.database import (
@@ -27,6 +30,7 @@ from news_trade.services.database import (
 )
 from news_trade.services.event_bus import EventBus
 from news_trade.services.stage1_repository import Stage1Repository
+from news_trade.services.tables import NewsEventRow
 from news_trade.services.watchlist_manager import WatchlistManager
 
 logging.basicConfig(
@@ -40,13 +44,54 @@ logger = logging.getLogger("news_trade")
 _MISFIRE_GRACE_SECS = 300
 
 
+def _load_replay_events(settings: Settings, ticker: str, limit: int) -> list[NewsEvent]:
+    """Query the last *limit* stored news events for *ticker* from the DB.
+
+    Used by ``--replay-ticker`` to re-inject already-ingested articles into
+    the pipeline without touching the live news provider or the dedup table.
+    """
+    engine = build_engine(settings)
+    with Session(engine) as session:
+        rows = (
+            session.execute(
+                select(NewsEventRow)
+                .where(NewsEventRow.tickers_json.contains(f'"{ticker}"'))
+                .order_by(NewsEventRow.ingested_at.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+    if not rows:
+        logger.warning("replay: no stored articles found for ticker=%s", ticker)
+        return []
+    logger.info("replay: loaded %d article(s) for ticker=%s", len(rows), ticker)
+    return [
+        NewsEvent(
+            event_id=row.event_id,
+            headline=row.headline,
+            summary=row.summary,
+            source=row.source,
+            url=row.url,
+            tickers=row.tickers,
+            event_type=EventType(row.event_type),
+            published_at=row.published_at,
+        )
+        for row in rows
+    ]
+
+
 async def run_cycle(pipeline, initial_state: PipelineState) -> PipelineState:
     """Execute a single pipeline cycle and return the resulting state."""
     result = await pipeline.ainvoke(initial_state)
     return result
 
 
-async def main(run_once: bool = False) -> None:
+async def main(
+    run_once: bool = False,
+    replay_ticker: str | None = None,
+    replay_limit: int = 5,
+) -> None:
     """Start the trading system and loop on the configured poll interval."""
     settings = get_settings()
 
@@ -156,9 +201,22 @@ async def main(run_once: bool = False) -> None:
         settings.news_poll_interval_sec,
     )
 
+    # --replay-ticker always runs a single cycle.
+    if replay_ticker:
+        run_once = True
+
     try:
         while True:
-            initial_state: PipelineState = {}  # type: ignore[typeddict-item]
+            if replay_ticker:
+                replay_events = _load_replay_events(
+                    settings, replay_ticker, replay_limit
+                )
+                initial_state: PipelineState = {  # type: ignore[typeddict-item]
+                    "news_events": replay_events,
+                    "replay_mode": True,
+                }
+            else:
+                initial_state = {}  # type: ignore[typeddict-item]
             state = await run_cycle(pipeline, initial_state)
 
             orders = state.get("orders", [])
@@ -188,8 +246,30 @@ def entrypoint() -> None:
         action="store_true",
         help="Run a single pipeline cycle then exit (debug mode)",
     )
+    parser.add_argument(
+        "--replay-ticker",
+        metavar="TICKER",
+        default=None,
+        help=(
+            "Replay the last stored news articles for TICKER, skipping the live "
+            "news provider and dedup check. Implies --once."
+        ),
+    )
+    parser.add_argument(
+        "--replay-limit",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Number of articles to replay when --replay-ticker is set (default: 5)",
+    )
     args = parser.parse_args()
-    asyncio.run(main(run_once=args.once))
+    asyncio.run(
+        main(
+            run_once=args.once,
+            replay_ticker=args.replay_ticker,
+            replay_limit=args.replay_limit,
+        )
+    )
 
 
 if __name__ == "__main__":

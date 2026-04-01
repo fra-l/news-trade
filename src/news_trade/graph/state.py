@@ -53,3 +53,4 @@ class PipelineState(TypedDict, total=False):
     # Control flow
     errors: list[str]
     system_halted: bool  # set True by RiskManagerAgent when drawdown limit is breached
+    replay_mode: bool  # set True by --replay-ticker; NewsIngestorAgent skips live fetch
