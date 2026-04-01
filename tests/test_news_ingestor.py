@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,7 +14,7 @@ from news_trade.agents.news_ingestor import (
 )
 from news_trade.models.events import EventType, NewsEvent
 
-NOW = datetime(2026, 3, 2, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 3, 2, 12, 0, 0, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -123,15 +123,15 @@ class TestParseDt:
         assert dt.day == 2
 
     def test_empty_string_returns_now(self):
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         dt = _parse_dt("")
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
         assert before <= dt <= after
 
     def test_invalid_string_returns_now(self):
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         dt = _parse_dt("not-a-date")
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
         assert before <= dt <= after
 
 
@@ -260,3 +260,23 @@ class TestRun:
         result = await agent.run({})
 
         assert result["news_events"] == []
+
+    async def test_run_replay_mode_passes_events_through(self, agent, mock_provider):
+        """When replay_mode=True the agent must return the pre-loaded events without
+        touching the live provider or the dedup table."""
+        event = _make_news_event("replay-1", "AAPL")
+        state = {"replay_mode": True, "news_events": [event]}
+
+        result = await agent.run(state)
+
+        assert result["news_events"] == [event]
+        mock_provider.fetch.assert_not_awaited()
+
+    async def test_run_replay_mode_empty_events(self, agent, mock_provider):
+        """replay_mode=True with no pre-loaded events returns an empty list."""
+        state = {"replay_mode": True}
+
+        result = await agent.run(state)
+
+        assert result["news_events"] == []
+        mock_provider.fetch.assert_not_awaited()

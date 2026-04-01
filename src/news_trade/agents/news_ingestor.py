@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -65,6 +67,14 @@ class NewsIngestorAgent(BaseAgent):
         Returns:
             ``{"news_events": [NewsEvent, ...]}``
         """
+        if state.get("replay_mode"):
+            # Events were pre-loaded by --replay-ticker; skip live fetch and dedup.
+            events = state.get("news_events") or []
+            self.logger.info(
+                "NewsIngestor: replay mode — passing through %d event(s)", len(events)
+            )
+            return {"news_events": events}
+
         watchlist = self._watchlist_manager.get_active_watchlist()
         self.logger.info("NewsIngestor: active watchlist=%s", watchlist)
 
@@ -73,7 +83,7 @@ class NewsIngestorAgent(BaseAgent):
                 tickers=watchlist,
                 since=state.get("last_poll"),
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.logger.error("News fetch failed: %s", exc)
             existing = state.get("errors") or []
             return {"news_events": [], "errors": [*existing, str(exc)]}
@@ -109,7 +119,7 @@ class NewsIngestorAgent(BaseAgent):
         for event in new_events:
             try:
                 await self.event_bus.publish("news_events", event)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self.logger.warning(
                     "Failed to publish event %s: %s", event.event_id, exc
                 )
@@ -167,18 +177,18 @@ def _classify_event_type(headline: str) -> EventType:
     return EventType.OTHER
 
 
-def _parse_dt(value: str) -> "datetime":  # noqa: F821  (forward ref for compat)
+def _parse_dt(value: str) -> datetime:  # noqa: F821  (forward ref for compat)
     """Parse an RFC 2822 or ISO 8601 datetime string, falling back to utcnow."""
-    from datetime import datetime, timezone
+    from datetime import datetime
     from email.utils import parsedate_to_datetime
 
     if not value:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     try:
         return parsedate_to_datetime(value)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     try:
         return datetime.fromisoformat(value)
     except ValueError:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
