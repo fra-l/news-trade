@@ -35,6 +35,7 @@ from news_trade.services.event_bus import EventBus
 from news_trade.services.session_reporter import SessionReporter
 from news_trade.services.stage1_repository import Stage1Repository
 from news_trade.services.tables import NewsEventRow
+from news_trade.services.telegram_bot import TelegramBotService
 from news_trade.services.watchlist_manager import WatchlistManager
 
 logging.basicConfig(
@@ -168,11 +169,16 @@ async def main(
     event_bus = EventBus(settings)
     await event_bus.connect()
 
+    telegram_bot: TelegramBotService | None = None
+    if settings.telegram_bot_token and settings.telegram_chat_id:
+        telegram_bot = TelegramBotService(settings, build_session_factory(settings))
+        await telegram_bot.start(event_bus)
+
     logger.info("Initialising database …")
     create_tables(settings)
 
     logger.info("Building LangGraph pipeline …")
-    pipeline = build_pipeline(settings, event_bus)
+    pipeline = build_pipeline(settings, event_bus, telegram_bot=telegram_bot)
 
     # ------------------------------------------------------------------
     # Cron agents — run outside the LangGraph pipeline on a daily schedule
@@ -264,6 +270,18 @@ async def main(
 
     try:
         while not shutdown_event.is_set():
+            # Operator-requested halt via Telegram /halt command.
+            if telegram_bot is not None and telegram_bot.operator_halt:
+                logger.info("Telegram operator halt active — skipping cycle")
+                try:
+                    await asyncio.wait_for(
+                        shutdown_event.wait(),
+                        timeout=settings.news_poll_interval_sec,
+                    )
+                    break
+                except TimeoutError:
+                    continue
+
             if replay_ticker:
                 replay_events = _load_replay_events(
                     settings, replay_ticker, replay_limit
@@ -310,6 +328,8 @@ async def main(
         loop.remove_signal_handler(signal.SIGTERM)
         logger.info("Shutting down scheduler and event bus …")
         scheduler.shutdown(wait=False)
+        if telegram_bot is not None:
+            await telegram_bot.stop()
         await event_bus.close()
         reporter.write(
             settings, session_start, cycle_count, session_errors, last_state, git_hash

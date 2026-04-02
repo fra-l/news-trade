@@ -27,6 +27,7 @@ reads from and writes to a shared `PipelineState` TypedDict.
 | Broker | Alpaca Markets (`alpaca-py`) |
 | Data Sources | RSS feeds, Benzinga, yfinance, Polygon.io |
 | Event Bus | Redis async pub/sub |
+| Operator interface | Telegram Bot (`python-telegram-bot` v20+) |
 | Database | SQLite (default) via SQLAlchemy ORM + **Alembic** migrations |
 | Validation | Pydantic v2 |
 | Linting | ruff |
@@ -82,6 +83,7 @@ src/news_trade/
 │   ├── estimates_renderer.py  # Deterministic FMP data → narrative formatter
 │   ├── confidence_scorer.py   # 4-component weighted scorer + confidence gate
 │   ├── stage1_repository.py   # Stage 1 position CRUD + outcome reflection (Pattern D)
+│   ├── telegram_bot.py    # Telegram operator interface (notifications, approval gate, commands)
 │   └── event_bus.py       # Async Redis pub/sub wrapper
 └── py.typed               # PEP 561 marker
 
@@ -150,6 +152,10 @@ to `.env` before running.
 | `PEAD_HORIZON_DAYS` | `5` | Calendar days after EARN_BEAT/MISS fill before auto-close via PEAD expiry cron |
 | `MAX_OPEN_POSITIONS` | `5` | Max concurrent open positions (Stage 2 ADD exempt) |
 | `RISK_DRY_RUN` | `false` | Log risk rejections without blocking — calibration mode |
+| `TELEGRAM_BOT_TOKEN` | `""` | Telegram Bot API token from @BotFather (empty = bot disabled) |
+| `TELEGRAM_CHAT_ID` | `0` | Operator chat ID (0 = bot disabled) |
+| `TELEGRAM_SIGNAL_APPROVAL` | `false` | Require Telegram approval before each signal executes; auto-proceeds after timeout |
+| `TELEGRAM_APPROVAL_TIMEOUT_SEC` | `30` | Seconds to wait for operator approval before auto-proceeding |
 
 ---
 
@@ -251,6 +257,7 @@ unless absolutely necessary with a comment explaining why.
 | **Alembic schema migrations** | **Done — `create_tables()` runs `alembic upgrade head` programmatically on every startup; `alembic/versions/6dae9e7efe75_initial_schema.py` captures all 6 tables; `DEPLOY.md` documents the `alembic stamp head` first-deploy procedure** |
 | **Version logging** | **Done — `main.py` logs `version`, short git commit hash, Python version, and `DATABASE_URL` at startup** |
 | **Session reporting (`SessionReporter`)** | **Done — writes `data/sessions/session_YYYYMMDD_HHMMSS.json` on exit; `--resume-session` / `--session-file` CLI flags load a previous session at startup and log a summary with system-halt and error warnings** |
+| **Telegram Bot (`TelegramBotService`)** | **Done — push notifications (drawdown halt), blocking signal approval gate with auto-proceed timeout, `/halt`/`/resume`/`/status`/`/portfolio`/`/signals` commands; fully optional (disabled when token/chat_id unset)** |
 
 The full pipeline is now operational end-to-end for all event types. `SignalGeneratorAgent`
 implements the complete EARN_\* two-stage logic (Pattern D): EARN_PRE sizes from the
