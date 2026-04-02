@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from news_trade.config import Settings
     from news_trade.services.event_bus import EventBus
     from news_trade.services.stage1_repository import Stage1Repository
+    from news_trade.services.telegram_bot import TelegramBotService
 
 
 class RiskManagerAgent(BaseAgent):
@@ -49,9 +50,11 @@ class RiskManagerAgent(BaseAgent):
         settings: Settings,
         event_bus: EventBus,
         stage1_repo: Stage1Repository,
+        telegram_gate: TelegramBotService | None = None,
     ) -> None:
         super().__init__(settings, event_bus)
         self._stage1_repo = stage1_repo
+        self._telegram_gate = telegram_gate
 
     # ------------------------------------------------------------------
     # LangGraph node
@@ -78,6 +81,25 @@ class RiskManagerAgent(BaseAgent):
         open_count = stage1_open_count + portfolio.position_count
 
         for signal in signals:
+            # Operator approval gate (optional) — runs before any risk check so
+            # the operator can veto signals that passed the confidence gate.
+            if (
+                self._telegram_gate is not None
+                and self.settings.telegram_signal_approval
+            ):
+                operator_approved = await self._telegram_gate.request_approval(signal)
+                if not operator_approved:
+                    self.logger.info(
+                        "Risk: %-6s  REJECTED  reason='operator_blocked'",
+                        signal.ticker,
+                    )
+                    rejected.append(
+                        signal.model_copy(
+                            update={"rejection_reason": "operator_blocked"}
+                        )
+                    )
+                    continue
+
             passed, reason, validation = self._evaluate(
                 signal, portfolio, open_count, approved
             )

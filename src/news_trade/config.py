@@ -210,6 +210,27 @@ class Settings(BaseSettings):
         description="Log risk rejections without blocking signals (calibration mode)",
     )
 
+    # --- Telegram Bot ---
+    telegram_bot_token: str = Field(
+        default="",
+        description="Telegram Bot API token from @BotFather (empty = bot disabled)",
+    )
+    telegram_chat_id: int = Field(
+        default=0,
+        description="Telegram chat ID to send messages to (0 = bot disabled)",
+    )
+    telegram_signal_approval: bool = Field(
+        default=False,
+        description=(
+            "When True, each signal is sent to Telegram for approval before "
+            "RiskManagerAgent runs its checks; auto-proceeds after timeout"
+        ),
+    )
+    telegram_approval_timeout_sec: int = Field(
+        default=30,
+        description="Seconds to wait for Telegram approval before auto-proceeding",
+    )
+
 
 def get_settings() -> Settings:
     """Return a cached Settings instance."""

@@ -134,7 +134,16 @@ See `docs/architecture/event-driven-signal-layer.md §3` for the full decision t
 
 ## Implemented: `RiskManagerAgent` ✅
 
-Constructor: `settings`, `event_bus`, `stage1_repo: Stage1Repository`.
+Constructor: `settings`, `event_bus`, `stage1_repo: Stage1Repository`,
+`telegram_gate: TelegramBotService | None = None`.
+
+**Telegram approval pre-check (optional L0):** When `telegram_gate` is not `None` and
+`settings.telegram_signal_approval=True`, each signal is sent to the operator via
+`await telegram_gate.request_approval(signal)` **before** any risk layer runs.
+If the operator presses Block, the signal is appended to `rejected_signals` with
+`rejection_reason="operator_blocked"` and the loop `continue`s, skipping all
+five layers for that signal. If the operator does not respond within
+`settings.telegram_approval_timeout_sec` seconds the gate auto-proceeds (fail-open).
 
 Five check layers (fail-fast, in order):
 
