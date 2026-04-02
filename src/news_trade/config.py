@@ -219,17 +219,6 @@ class Settings(BaseSettings):
         default=0,
         description="Telegram chat ID to send messages to (0 = bot disabled)",
     )
-    telegram_signal_approval: bool = Field(
-        default=False,
-        description=(
-            "When True, each signal is sent to Telegram for approval before "
-            "RiskManagerAgent runs its checks; auto-proceeds after timeout"
-        ),
-    )
-    telegram_approval_timeout_sec: int = Field(
-        default=30,
-        description="Seconds to wait for Telegram approval before auto-proceeding",
-    )
 
 
 def get_settings() -> Settings:

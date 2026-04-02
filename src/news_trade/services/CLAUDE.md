@@ -18,7 +18,7 @@ All services receive dependencies via constructor injection.
 | `session_reporter.py` | `SessionReporter` | Write JSON session reports on exit; read + summarise previous session on startup |
 | `event_bus.py` | `EventBus` | Async Redis pub/sub wrapper |
 | `watchlist_manager.py` | `WatchlistManager` | Runtime watchlist backed by SQLite; CLI scan + operator selection |
-| `telegram_bot.py` | `TelegramBotService` | Telegram operator interface — push notifications, blocking signal approval gate, `/halt`/`/resume`/`/status`/`/portfolio`/`/signals` commands |
+| `telegram_bot.py` | `TelegramBotService` | Telegram operator interface — push notifications (drawdown halt, trade execution), read-only query commands (`/status`, `/portfolio`, `/signals`, `/help`) |
 
 ---
 
@@ -253,47 +253,33 @@ Redis URL from `settings.redis_url`.
 
 ---
 
-## `telegram_bot.py` — Operator Interface (Telegram)
+## `telegram_bot.py` — Read-Only Operator Observer (Telegram)
 
 ```python
 bot = TelegramBotService(settings, session_factory)
-await bot.start(event_bus)          # call once at startup; no-op if token/chat_id unset
-approved = await bot.request_approval(signal)   # called by RiskManagerAgent
-await bot.stop()                    # call in the finally block
+await bot.start(event_bus)   # call once at startup; no-op if token/chat_id unset
+await bot.stop()             # call in the finally block
 ```
 
 **Disabled** when `settings.telegram_bot_token == ""` or `settings.telegram_chat_id == 0`.
-Zero impact on non-Telegram deploys.
+Zero impact on non-Telegram deploys. The trading pipeline runs fully automatically —
+the bot never blocks or influences trading decisions.
 
-**Signal approval gate** (`request_approval`):
-- Sends an inline-keyboard message (Approve / Block) to the operator.
-- Awaits an `asyncio.Future` stored in `_pending[signal_id]`; resolved by the
-  `CallbackQueryHandler` (`_on_callback`) when the operator presses a button.
-- `asyncio.wait_for` with `settings.telegram_approval_timeout_sec` (default 30 s).
-  On timeout or Telegram send-failure, returns `True` (fail-open — pipeline proceeds).
-- Only active when `settings.telegram_signal_approval=True`.
+**Push notifications** (`_redis_listener` background task):
 
-**Operator halt** (`operator_halt: bool`):
-- `/halt` sets `operator_halt = True`; `main.py` checks this flag before each cycle
-  and skips the cycle if set (prints a log line and sleeps the poll interval).
-- `/resume` clears the flag.
-- Orthogonal to the drawdown `system_halted` mechanism — both can be active simultaneously.
+| Channel | Message |
+|---|---|
+| `system_halted` | "SYSTEM HALTED — drawdown limit breached (drawdown=X). All positions closed." |
+| `trade_executed` | "Trade executed: AAPL BUY qty=10\nOrder ID: ...\nStatus: submitted" |
 
-**Push notifications**:
-- `_redis_listener` task subscribes to the `system_halted` Redis channel and
-  forwards the event as a Telegram message.
-- Startup and shutdown send informational messages.
+The `trade_executed` event is published by `ExecutionAgent` immediately after each order
+is submitted. `EventBus.subscribe()` accepts multiple channel names in one call.
 
 **Commands** (all reject requests from any chat_id other than `settings.telegram_chat_id`):
 
 | Command | Behaviour |
 |---|---|
 | `/help` | List available commands |
-| `/status` | Current operator-halt state, signal-approval setting, timestamp |
+| `/status` | System running state + timestamp |
 | `/portfolio` | Last 10 `OrderRow` entries from SQLite (ticker, side, qty, status, fill price) |
 | `/signals [N]` | Last N `TradeSignalRow` entries (default 5, max 20) |
-| `/halt` | Set `operator_halt=True` — trading loop skips cycles until `/resume` |
-| `/resume` | Clear `operator_halt=False` — trading loop resumes |
-
-**`stop()`** resolves all pending approval futures with `True` (auto-approve) before
-shutting down the Application so no coroutine hangs on shutdown.

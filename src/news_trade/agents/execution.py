@@ -11,6 +11,7 @@ from alpaca.trading.enums import OrderSide as AlpacaOrderSide
 from alpaca.trading.enums import TimeInForce
 from alpaca.trading.models import Order as AlpacaOrder
 from alpaca.trading.requests import MarketOrderRequest
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from news_trade.agents.base import BaseAgent
@@ -20,6 +21,17 @@ from news_trade.models.portfolio import PortfolioState
 from news_trade.models.signals import SignalDirection, TradeSignal
 from news_trade.services.event_bus import EventBus
 from news_trade.services.tables import OrderRow
+
+
+class _TradeExecutedEvent(BaseModel):
+    """Published to Redis when ExecutionAgent places an order."""
+
+    event: str = "TRADE_EXECUTED"
+    ticker: str
+    side: str
+    qty: int
+    order_id: str
+    status: str
 
 
 class ExecutionAgent(BaseAgent):
@@ -63,6 +75,21 @@ class ExecutionAgent(BaseAgent):
                     else None
                 )
                 self._log_order(order, close_after_date=close_after)
+                try:
+                    await self.event_bus.publish(
+                        "trade_executed",
+                        _TradeExecutedEvent(
+                            ticker=order.ticker,
+                            side=order.side.value,
+                            qty=order.qty,
+                            order_id=order.order_id,
+                            status=order.status.value,
+                        ),
+                    )
+                except Exception:
+                    self.logger.warning(
+                        "trade_executed publish failed for order %s", order.order_id
+                    )
                 orders.append(order)
             except Exception as exc:
                 self.logger.error(
