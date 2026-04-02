@@ -24,6 +24,7 @@ No real network calls, no real API keys, no Redis, no file-system databases.
 | `test_expiry_scanner.py` | `ExpiryScanner` — expired position marking, no-op on empty, real-repo integration | MagicMock `Stage1Repository` + in-memory SQLite |
 | `test_signal_generator.py` | `SignalGeneratorAgent` — generic signals, debate gate, EARN_\* two-stage logic, three-tier beat-rate fallback, `_parse_calendar_fields` | MagicMock `Stage1Repository` + `ConfidenceScorer` |
 | `test_watchlist_manager.py` | `WatchlistManager` — `get_active_watchlist()` fallback logic, `save_selection()`/`load_selected()` round-trip, `scan_candidates()` filtering + provider fallback, agent injection assertions | In-memory SQLite + `AsyncMock` providers |
+| `test_session_reporter.py` | `SessionReporter` — `find_latest()`, `load()`, `load_latest()`, `write()` (correct filename, expected keys, partial record on DB failure, dir creation), `log_startup_summary()` (halt warning, error warning, version change, clean session) | `tmp_path` fixture + `unittest.mock.patch` |
 
 ---
 

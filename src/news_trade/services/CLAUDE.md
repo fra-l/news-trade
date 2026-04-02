@@ -15,6 +15,7 @@ All services receive dependencies via constructor injection.
 | `estimates_renderer.py` | `EstimatesRenderer` | Deterministic FMP data → narrative formatter |
 | `confidence_scorer.py` | `ConfidenceScorer` | 4-component weighted confidence scoring + gate |
 | `stage1_repository.py` | `Stage1Repository` | Stage 1 position CRUD + outcome reflection |
+| `session_reporter.py` | `SessionReporter` | Write JSON session reports on exit; read + summarise previous session on startup |
 | `event_bus.py` | `EventBus` | Async Redis pub/sub wrapper |
 | `watchlist_manager.py` | `WatchlistManager` | Runtime watchlist backed by SQLite; CLI scan + operator selection |
 
@@ -141,6 +142,45 @@ model and the DB row share the same `id` without a round-trip.
 
 DateTime defaults use `default=datetime.utcnow` (callable, not call). `updated_at` uses
 `onupdate=datetime.utcnow` plus an explicit assignment in `update_status()` as belt-and-suspenders.
+
+---
+
+## `session_reporter.py` — Session Reports (Write + Read)
+
+```python
+reporter = SessionReporter()                        # default dir: data/sessions/
+reporter = SessionReporter(sessions_dir=Path("…"))  # custom dir (tests)
+
+# On exit — write JSON audit file
+path = reporter.write(settings, session_start, cycle_count, errors, last_state, git_hash)
+
+# On startup — read previous session
+previous = reporter.load_latest()          # most recent, or None
+previous = reporter.load(Path("…"))        # specific file
+reporter.log_startup_summary(previous, current_commit)
+```
+
+Files are named `session_YYYYMMDD_HHMMSS.json` (timestamp-sortable). `find_latest()` uses
+a lexicographic glob sort — no date parsing needed.
+
+**`write()`** queries `OrderRow`, `TradeSignalRow`, and `OpenStage1PositionRow` for the
+session window and writes a JSON dict containing:
+`session_start`, `session_end`, `duration_seconds`, `version`, `commit`, `cycles_run`,
+`system_halted`, `orders_placed`, `signals` (total/approved/rejected),
+`open_stage1_positions`, `errors`.
+On DB failure a partial record with an `"error"` key is written so there is always an audit
+file on disk.
+
+**`log_startup_summary()`** emits:
+- `INFO` with the previous session's key metrics (cycles, orders, signals, open positions,
+  version, commit).
+- `WARNING` if `system_halted=True` — operator must acknowledge before resuming live trading.
+- `WARNING` listing all previous-session errors.
+- `INFO` if `commit` differs from `current_commit` — version change since last run.
+
+**CLI flags** (see `main.py`):
+- `--resume-session` — load latest session file on startup.
+- `--session-file PATH` — load a specific file (implies `--resume-session`).
 
 ---
 

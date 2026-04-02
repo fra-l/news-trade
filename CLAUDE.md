@@ -166,6 +166,8 @@ uv run news-trade                # Start the main polling loop
 uv run news-trade --once         # Run a single cycle and exit (debug mode)
 uv run news-trade --replay-ticker AAPL            # Replay last 5 stored AAPL articles (implies --once)
 uv run news-trade --replay-ticker AAPL --replay-limit 10  # Replay last 10 stored articles
+uv run news-trade --resume-session                # Log previous session summary on startup (latest file)
+uv run news-trade --session-file data/sessions/session_20260401_090000.json  # Load specific session
 
 # Quality
 uv run ruff check src/ tests/    # Lint (rules: E, F, I, N, UP, B, SIM, RUF)
@@ -248,6 +250,7 @@ unless absolutely necessary with a comment explaining why.
 | **Dynamic Watchlist Selection** | **Done — `WatchlistManager` service + `select-watchlist` CLI; `WatchlistSelectionRow` ORM table; `is_candidate` computed field on `EarningsCalendarEntry`; injected into `NewsIngestorAgent`, `SentimentAnalystAgent`, `EarningsCalendarAgent`** |
 | **Alembic schema migrations** | **Done — `create_tables()` runs `alembic upgrade head` programmatically on every startup; `alembic/versions/6dae9e7efe75_initial_schema.py` captures all 6 tables; `DEPLOY.md` documents the `alembic stamp head` first-deploy procedure** |
 | **Version logging** | **Done — `main.py` logs `version`, short git commit hash, Python version, and `DATABASE_URL` at startup** |
+| **Session reporting (`SessionReporter`)** | **Done — writes `data/sessions/session_YYYYMMDD_HHMMSS.json` on exit; `--resume-session` / `--session-file` CLI flags load a previous session at startup and log a summary with system-halt and error warnings** |
 
 The full pipeline is now operational end-to-end for all event types. `SignalGeneratorAgent`
 implements the complete EARN_\* two-stage logic (Pattern D): EARN_PRE sizes from the
