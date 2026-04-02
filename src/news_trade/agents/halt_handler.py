@@ -85,6 +85,24 @@ class HaltHandlerAgent(BaseAgent):
         return {"errors": errors}
 
     # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def close_all(self) -> list[str]:
+        """Orchestrate full halt cleanup without going through the LangGraph pipeline.
+
+        Runs the same three steps as ``run()`` — cancel orders, close positions,
+        expire Stage 1 positions — and returns any accumulated error strings.
+        Called by ``main.py`` in the ``finally`` block when the operator issues
+        ``/stop`` via Telegram. Does not raise; errors are logged and returned.
+        """
+        errors: list[str] = []
+        errors.extend(await self._cancel_all_orders())
+        errors.extend(await self._close_all_positions())
+        errors.extend(self._expire_open_stage1_positions())
+        return errors
+
+    # ------------------------------------------------------------------
     # Cleanup steps
     # ------------------------------------------------------------------
 

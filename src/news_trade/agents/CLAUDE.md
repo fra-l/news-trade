@@ -194,6 +194,12 @@ Constructor: `settings: Settings`, `event_bus: EventBus`, `alpaca_client: Tradin
 4. `_expire_open_stage1_positions()` — `stage1_repo.load_all_open()` → `update_status(EXPIRED)` per position
 5. Returns `{"errors": [...]}` — does not mutate `system_halted` (already set by `RiskManagerAgent`)
 
+`close_all() -> list[str]` — public async method; identical cleanup sequence (cancel orders →
+close positions → expire Stage1) but without the LangGraph state context. Called by `main.py`
+in the `finally` block when the operator issues `/stop` via Telegram. Safe to call on the same
+`alpaca_client` and `stage1_repo` instance used by the pipeline. Does not raise; errors are
+logged and returned.
+
 Each step is independently wrapped in `try/except`; failures are accumulated in `errors` and
 logged at `ERROR` level — cleanup continues even if Alpaca is unreachable. Mirrors the
 `None`-safe injection pattern from `ExecutionAgent` and the repository pattern from

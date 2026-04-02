@@ -20,6 +20,7 @@ from news_trade import __version__
 from news_trade.agents.earnings_calendar import EarningsCalendarAgent
 from news_trade.agents.execution import ExecutionAgent
 from news_trade.agents.expiry_scanner import ExpiryScanner
+from news_trade.agents.halt_handler import HaltHandlerAgent
 from news_trade.config import Settings, get_settings
 from news_trade.graph.pipeline import build_pipeline
 from news_trade.graph.state import PipelineState
@@ -154,11 +155,20 @@ async def main(
     # The running cycle is allowed to complete before the loop exits.
     # ------------------------------------------------------------------
     shutdown_event = asyncio.Event()
+    operator_stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
     def _request_shutdown() -> None:
         if not shutdown_event.is_set():
             logger.info("Shutdown requested — finishing current cycle …")
+            shutdown_event.set()
+
+    def _request_stop() -> None:
+        if not shutdown_event.is_set():
+            logger.warning(
+                "Operator /stop received — shutting down loop and closing all positions"
+            )
+            operator_stop_event.set()
             shutdown_event.set()
 
     loop.add_signal_handler(signal.SIGINT, _request_shutdown)
@@ -171,7 +181,9 @@ async def main(
 
     telegram_bot: TelegramBotService | None = None
     if settings.telegram_bot_token and settings.telegram_chat_id:
-        telegram_bot = TelegramBotService(settings, build_session_factory(settings))
+        telegram_bot = TelegramBotService(
+            settings, build_session_factory(settings), stop_callback=_request_stop
+        )
         await telegram_bot.start(event_bus)
 
     logger.info("Initialising database …")
@@ -215,6 +227,12 @@ async def main(
         event_bus,
         alpaca_client=cron_alpaca,
         session=cron_session,
+    )
+    stop_cleanup_agent = HaltHandlerAgent(
+        settings,
+        event_bus,
+        alpaca_client=cron_alpaca,
+        stage1_repo=cron_stage1_repo,
     )
 
     scheduler = AsyncIOScheduler(timezone="America/New_York")
@@ -316,6 +334,18 @@ async def main(
         loop.remove_signal_handler(signal.SIGTERM)
         logger.info("Shutting down scheduler and event bus …")
         scheduler.shutdown(wait=False)
+        if operator_stop_event.is_set() and not last_state.get("system_halted"):
+            logger.warning(
+                "Operator stop: cancelling all orders and closing positions …"
+            )
+            cleanup_errors = await stop_cleanup_agent.close_all()
+            if cleanup_errors:
+                logger.error("Operator stop cleanup errors: %s", cleanup_errors)
+                session_errors.extend(cleanup_errors)
+            if telegram_bot is not None:
+                await telegram_bot.notify(
+                    "Stop complete. All pending orders cancelled and positions closed."
+                )
         if telegram_bot is not None:
             await telegram_bot.stop()
         await event_bus.close()
