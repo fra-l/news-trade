@@ -32,7 +32,6 @@ from news_trade.services.estimates_renderer import EstimatesRenderer
 from news_trade.services.event_bus import EventBus
 from news_trade.services.llm_client import LLMClientFactory
 from news_trade.services.stage1_repository import Stage1Repository
-from news_trade.services.telegram_bot import TelegramBotService
 from news_trade.services.watchlist_manager import WatchlistManager
 
 # Node name constants
@@ -45,11 +44,7 @@ EXECUTION = "execution"
 HALT = "halt_handler"
 
 
-def build_pipeline(
-    settings: Settings,
-    event_bus: EventBus,
-    telegram_bot: TelegramBotService | None = None,
-) -> StateGraph:
+def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     """Build and compile the LangGraph state graph.
 
     Graph topology::
@@ -114,9 +109,7 @@ def build_pipeline(
         scorer=scorer,
         stage1_repo=stage1_repo,
     )
-    risk_agent = RiskManagerAgent(
-        settings, event_bus, stage1_repo=stage1_repo, telegram_gate=telegram_bot
-    )
+    risk_agent = RiskManagerAgent(settings, event_bus, stage1_repo=stage1_repo)
 
     alpaca_client = TradingClient(
         api_key=settings.alpaca_api_key,

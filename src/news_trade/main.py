@@ -178,7 +178,7 @@ async def main(
     create_tables(settings)
 
     logger.info("Building LangGraph pipeline …")
-    pipeline = build_pipeline(settings, event_bus, telegram_bot=telegram_bot)
+    pipeline = build_pipeline(settings, event_bus)
 
     # ------------------------------------------------------------------
     # Cron agents — run outside the LangGraph pipeline on a daily schedule
@@ -270,18 +270,6 @@ async def main(
 
     try:
         while not shutdown_event.is_set():
-            # Operator-requested halt via Telegram /halt command.
-            if telegram_bot is not None and telegram_bot.operator_halt:
-                logger.info("Telegram operator halt active — skipping cycle")
-                try:
-                    await asyncio.wait_for(
-                        shutdown_event.wait(),
-                        timeout=settings.news_poll_interval_sec,
-                    )
-                    break
-                except TimeoutError:
-                    continue
-
             if replay_ticker:
                 replay_events = _load_replay_events(
                     settings, replay_ticker, replay_limit

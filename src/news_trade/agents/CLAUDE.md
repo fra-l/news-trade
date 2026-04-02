@@ -134,16 +134,7 @@ See `docs/architecture/event-driven-signal-layer.md §3` for the full decision t
 
 ## Implemented: `RiskManagerAgent` ✅
 
-Constructor: `settings`, `event_bus`, `stage1_repo: Stage1Repository`,
-`telegram_gate: TelegramBotService | None = None`.
-
-**Telegram approval pre-check (optional L0):** When `telegram_gate` is not `None` and
-`settings.telegram_signal_approval=True`, each signal is sent to the operator via
-`await telegram_gate.request_approval(signal)` **before** any risk layer runs.
-If the operator presses Block, the signal is appended to `rejected_signals` with
-`rejection_reason="operator_blocked"` and the loop `continue`s, skipping all
-five layers for that signal. If the operator does not respond within
-`settings.telegram_approval_timeout_sec` seconds the gate auto-proceeds (fail-open).
+Constructor: `settings`, `event_bus`, `stage1_repo: Stage1Repository`.
 
 Five check layers (fail-fast, in order):
 
@@ -172,7 +163,7 @@ models, and upserts every order to `OrderRow` via the injected `Session`.
 | Method | Purpose |
 |---|---|
 | `run(state)` | Iterates `approved_signals`, calls `_submit_order()` per signal, computes `close_after_date` from `signal.horizon_days`, logs each result |
-| `_submit_order(signal, portfolio)` | Builds `MarketOrderRequest`, calls Alpaca, returns `Order` |
+| `_submit_order(signal, portfolio)` | Builds `MarketOrderRequest`, calls Alpaca, returns `Order`; publishes `trade_executed` event to Redis (Telegram notification) after submission |
 | `_sync_order_status(order)` | Polls Alpaca for updated status; updates `filled_qty`, `filled_avg_price` |
 | `_cancel_order(order)` | Cancels order on Alpaca; returns updated `Order` with `CANCELLED` status |
 | `_log_order(order, close_after_date)` | Upserts `OrderRow` to SQLite; stores `close_after_date` on insert; upsert leaves it unchanged; no-op if `session=None` |
