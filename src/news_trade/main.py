@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import signal
 import subprocess
@@ -33,13 +32,9 @@ from news_trade.services.database import (
     create_tables,
 )
 from news_trade.services.event_bus import EventBus
+from news_trade.services.session_reporter import SessionReporter
 from news_trade.services.stage1_repository import Stage1Repository
-from news_trade.services.tables import (
-    NewsEventRow,
-    OpenStage1PositionRow,
-    OrderRow,
-    TradeSignalRow,
-)
+from news_trade.services.tables import NewsEventRow
 from news_trade.services.watchlist_manager import WatchlistManager
 
 logging.basicConfig(
@@ -90,114 +85,6 @@ def _load_replay_events(settings: Settings, ticker: str, limit: int) -> list[New
     ]
 
 
-def _write_session_report(
-    settings: Settings,
-    session_start: datetime,
-    cycle_count: int,
-    errors: list[str],
-    last_state: PipelineState,
-    git_hash: str,
-) -> None:
-    """Write a JSON session summary to data/sessions/session_YYYYMMDD_HHMMSS.json.
-
-    Queries orders, signals, and open Stage 1 positions created since
-    *session_start* so the operator has a compact audit file after each run.
-    """
-    session_end = datetime.now(UTC)
-    # DB timestamps are naive UTC — strip tzinfo for comparison.
-    session_start_naive = session_start.replace(tzinfo=None)
-
-    try:
-        engine = build_engine(settings)
-        with Session(engine) as db:
-            order_rows = (
-                db.execute(
-                    select(OrderRow).where(OrderRow.created_at >= session_start_naive)
-                )
-                .scalars()
-                .all()
-            )
-            signal_rows = (
-                db.execute(
-                    select(TradeSignalRow).where(
-                        TradeSignalRow.created_at >= session_start_naive
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            open_positions = (
-                db.execute(
-                    select(OpenStage1PositionRow).where(
-                        OpenStage1PositionRow.status == "open"
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-        report: dict = {
-            "session_start": session_start.isoformat(),
-            "session_end": session_end.isoformat(),
-            "duration_seconds": round(
-                (session_end - session_start.replace(tzinfo=UTC)).total_seconds(),
-                1,
-            ),
-            "version": __version__,
-            "commit": git_hash,
-            "cycles_run": cycle_count,
-            "system_halted": last_state.get("system_halted", False),
-            "orders_placed": [
-                {
-                    "order_id": o.order_id,
-                    "ticker": o.ticker,
-                    "side": o.side,
-                    "qty": o.qty,
-                    "status": o.status,
-                    "submitted_at": (
-                        o.submitted_at.isoformat() if o.submitted_at else None
-                    ),
-                }
-                for o in order_rows
-            ],
-            "signals": {
-                "total": len(signal_rows),
-                "approved": sum(1 for s in signal_rows if s.approved),
-                "rejected": sum(1 for s in signal_rows if not s.approved),
-            },
-            "open_stage1_positions": [
-                {
-                    "id": p.id,
-                    "ticker": p.ticker,
-                    "direction": p.direction,
-                    "size_pct": p.size_pct,
-                    "expected_report_date": p.expected_report_date.isoformat(),
-                    "fiscal_quarter": p.fiscal_quarter,
-                    "status": p.status,
-                }
-                for p in open_positions
-            ],
-            "errors": errors,
-        }
-    except Exception:
-        logger.exception("Failed to build session report — writing partial record")
-        report = {
-            "session_start": session_start.isoformat(),
-            "session_end": session_end.isoformat(),
-            "cycles_run": cycle_count,
-            "version": __version__,
-            "commit": git_hash,
-            "error": "report generation failed — see logs",
-        }
-
-    out_dir = Path("data/sessions")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    ts = session_start.strftime("%Y%m%d_%H%M%S")
-    out_path = out_dir / f"session_{ts}.json"
-    out_path.write_text(json.dumps(report, indent=2))
-    logger.info("Session report written → %s", out_path)
-
-
 async def run_cycle(pipeline, initial_state: PipelineState) -> PipelineState:
     """Execute a single pipeline cycle and return the resulting state."""
     result = await pipeline.ainvoke(initial_state)
@@ -209,8 +96,15 @@ async def main(
     replay_ticker: str | None = None,
     replay_limit: int = 5,
     stop_after: int | None = None,
+    session_file: Path | None = None,
 ) -> None:
-    """Start the trading system and loop on the configured poll interval."""
+    """Start the trading system and loop on the configured poll interval.
+
+    Args:
+        session_file: When set, load this session JSON (or the latest one if the
+                      path is the sentinel ``Path("__latest__")``) and emit a
+                      startup summary before entering the main loop.
+    """
     settings = get_settings()
 
     try:
@@ -229,6 +123,30 @@ async def main(
         sys.version.split()[0],
         settings.database_url,
     )
+
+    # ------------------------------------------------------------------
+    # Previous-session context — log a summary and safety warnings so the
+    # operator immediately sees if the last run halted or had errors.
+    # ------------------------------------------------------------------
+    reporter = SessionReporter()
+    if session_file is not None:
+        if str(session_file) == "__latest__":
+            previous = reporter.load_latest()
+            if previous is None:
+                logger.warning(
+                    "--resume-session: no previous session files found in %s",
+                    reporter._dir,
+                )
+        else:
+            try:
+                previous = reporter.load(session_file)
+            except Exception:
+                logger.exception(
+                    "--session-file: could not read %s — skipping", session_file
+                )
+                previous = None
+        if previous is not None:
+            reporter.log_startup_summary(previous, git_hash)
 
     # ------------------------------------------------------------------
     # Graceful shutdown — SIGINT (Ctrl+C) and SIGTERM both set this event.
@@ -393,7 +311,7 @@ async def main(
         logger.info("Shutting down scheduler and event bus …")
         scheduler.shutdown(wait=False)
         await event_bus.close()
-        _write_session_report(
+        reporter.write(
             settings, session_start, cycle_count, session_errors, last_state, git_hash
         )
 
@@ -429,13 +347,39 @@ def entrypoint() -> None:
         metavar="N",
         help="Number of articles to replay when --replay-ticker is set (default: 5)",
     )
+    parser.add_argument(
+        "--resume-session",
+        action="store_true",
+        help=(
+            "Load the most recent session JSON from data/sessions/ on startup and "
+            "log a summary including any system-halt or error warnings."
+        ),
+    )
+    parser.add_argument(
+        "--session-file",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Path to a specific session JSON to load on startup. "
+            "Implies --resume-session. If omitted with --resume-session, "
+            "uses the latest file."
+        ),
+    )
     args = parser.parse_args()
+
+    session_file: Path | None = None
+    if args.session_file:
+        session_file = Path(args.session_file)
+    elif args.resume_session:
+        session_file = Path("__latest__")
+
     asyncio.run(
         main(
             run_once=args.once,
             replay_ticker=args.replay_ticker,
             replay_limit=args.replay_limit,
             stop_after=args.stop_after,
+            session_file=session_file,
         )
     )
 
