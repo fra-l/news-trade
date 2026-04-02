@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -69,9 +70,11 @@ class TelegramBotService:
         self,
         settings: Settings,
         session_factory: sessionmaker[Session],
+        stop_callback: Callable[[], None] | None = None,
     ) -> None:
         self._settings = settings
         self._session_factory = session_factory
+        self._stop_callback = stop_callback
         self._app: Application | None = None  # type: ignore[type-arg]
         self._redis_task: asyncio.Task[None] | None = None
 
@@ -95,6 +98,7 @@ class TelegramBotService:
         self._app.add_handler(CommandHandler("status", self._cmd_status))
         self._app.add_handler(CommandHandler("portfolio", self._cmd_portfolio))
         self._app.add_handler(CommandHandler("signals", self._cmd_signals))
+        self._app.add_handler(CommandHandler("stop", self._cmd_stop))
 
         await self._app.initialize()
         await self._app.start()
@@ -160,6 +164,7 @@ class TelegramBotService:
             "/status    — system state and timestamp\n"
             "/portfolio — recent orders and open positions\n"
             "/signals N — last N trade signals (default 5)\n"
+            "/stop      — cancel all orders, close all positions, exit loop\n"
             "/help      — this message"
         )
         await update.effective_message.reply_text(text)  # type: ignore[union-attr]
@@ -221,6 +226,19 @@ class TelegramBotService:
                 f"gate={gate} {row.created_at.strftime('%m-%d %H:%M')}"
             )
         await update.effective_message.reply_text("\n".join(lines))  # type: ignore[union-attr]
+
+    async def _cmd_stop(self, update: Update, context: _Ctx) -> None:
+        if not self._is_authorised(update):
+            return
+        if self._stop_callback is None:
+            await update.effective_message.reply_text(  # type: ignore[union-attr]
+                "Stop not available."
+            )
+            return
+        await update.effective_message.reply_text(  # type: ignore[union-attr]
+            "Stopping trading loop and closing all positions. This may take a moment..."
+        )
+        self._stop_callback()
 
     # ------------------------------------------------------------------
     # Redis listener — push notifications for key pipeline events

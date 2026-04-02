@@ -338,3 +338,62 @@ class TestStop:
         bot = _make_bot()
         bot._app = None
         await bot.stop()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# TestStopCommand
+# ---------------------------------------------------------------------------
+
+
+class TestStopCommand:
+    """/stop command handler — operator-initiated loop exit + position closure."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self) -> None:
+        self.callback_called = False
+
+        def _callback() -> None:
+            self.callback_called = True
+
+        self.bot = TelegramBotService(
+            _make_settings(), _make_session(), stop_callback=_callback
+        )
+        self.app = _mock_application()
+        self.bot._app = self.app
+
+    async def test_stop_authorised_calls_callback(self) -> None:
+        """Authorised /stop invokes the stop_callback and sends a confirmation."""
+        update = _mock_update(chat_id=12345)
+        await self.bot._cmd_stop(update, _mock_context())
+
+        assert self.callback_called
+        update.effective_message.reply_text.assert_called_once()
+        text: str = update.effective_message.reply_text.call_args[0][0]
+        assert "stop" in text.lower() or "closing" in text.lower()
+
+    async def test_stop_unauthorised_ignored(self) -> None:
+        """Unauthorised /stop: callback is NOT called and no reply is sent."""
+        update = _mock_update(chat_id=99999)
+        await self.bot._cmd_stop(update, _mock_context())
+
+        assert not self.callback_called
+        update.effective_message.reply_text.assert_not_called()
+
+    async def test_stop_no_callback_replies_not_available(self) -> None:
+        """When stop_callback is None, /stop replies 'Stop not available.'"""
+        bot = TelegramBotService(_make_settings(), _make_session(), stop_callback=None)
+        bot._app = self.app
+        update = _mock_update(chat_id=12345)
+        await bot._cmd_stop(update, _mock_context())
+
+        assert not self.callback_called  # the fixture callback was never assigned here
+        update.effective_message.reply_text.assert_called_once()
+        text: str = update.effective_message.reply_text.call_args[0][0]
+        assert "not available" in text.lower()
+
+    async def test_help_mentions_stop(self) -> None:
+        """/help output lists the /stop command."""
+        update = _mock_update(chat_id=12345)
+        await self.bot._cmd_help(update, _mock_context())
+        text: str = update.effective_message.reply_text.call_args[0][0]
+        assert "/stop" in text
