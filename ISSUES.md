@@ -275,6 +275,56 @@ interactive CLI and activate tickers without editing `.env` or restarting the pr
 
 ---
 
+---
+
+## Issue 28: Agent self-learning — close the feedback loop beyond EARN_PRE
+
+**Priority:** P2 — Nice-to-have
+**Depends on:** Pattern D (Stage1Repository), Pattern A (DebateResult on TradeSignal), ExecutionAgent (OrderRow)
+**Labels:** `feature`, `learning`, `architecture`
+
+The system already has one self-learning loop (Pattern D): `Stage1Repository` records
+EARN_PRE outcomes and, after ≥4 quarters per ticker, replaces static FMP beat rates
+with the system's own observed beat rate.  All other signal types and scoring components
+are fully static — weights and gates are hand-tuned constants that never update.
+
+### Gaps to close
+
+| Gap | Location | Impact |
+|---|---|---|
+| `ConfidenceScorer` weights (`_WEIGHTS`) are hardcoded constants | `services/confidence_scorer.py` | Surprise/sentiment/coverage/source weights never adapt based on realised P&L |
+| `ConfidenceScorer` gate thresholds (`_GATES`) are hardcoded | `services/confidence_scorer.py` | Gate thresholds are hand-tuned; no data-driven calibration over time |
+| `_SOURCE_SCORES` are static | `services/confidence_scorer.py` | A source proven consistently wrong (e.g. Reddit) is never demoted automatically |
+| Non-earnings signals have no outcome recording | No equivalent of `record_outcome()` for M&A, guidance, regulatory, etc. | P&L data for these event types is never persisted for future use |
+| Pattern A debate verdicts are audit-only | `TradeSignal.debate_result` | CONFIRM/REDUCE/REJECT verdicts are stored but never fed back to improve future debate prompts or thresholds |
+| `ConfidenceScorer.score()` has no memory of which score ranges led to profitable trades | `services/confidence_scorer.py` | Gate thresholds remain static regardless of observed hit-rate per score bucket |
+
+### Proposed approach (high level)
+
+1. **Generic outcome table** — extend `EarningsOutcomeRow` (or add a new `SignalOutcomeRow`)
+   to record final P&L, direction correctness, and confidence score for every filled order,
+   keyed on `signal_id`.  `ExecutionAgent` writes the row when an order closes.
+
+2. **Per-event-type hit-rate tracking** — after N outcomes per `EventType`, compute the
+   empirical precision (correct direction / total) per confidence bucket (e.g. 0.5–0.6,
+   0.6–0.7, …).  Feed this into a gate calibration step (e.g. shift the gate up/down by
+   0.02 per period).
+
+3. **Source credibility decay** — compute per-source precision over a rolling window; update
+   `_SOURCE_SCORES` from DB at startup (DB values override the hardcoded defaults).
+
+4. **Debate verdict calibration** — track the P&L of signals that received REDUCE or REJECT
+   verdicts (compared to what would have happened without the debate) to assess whether the
+   debate gate is adding value and tune `signal_debate_threshold`.
+
+### Out of scope for this issue
+
+- Full online gradient-based learning (would require a different architecture)
+- Model fine-tuning or prompt optimisation via RL
+- Changing the LangGraph pipeline structure
+
+---
+
 ## Dependency graph
 
 ```
