@@ -19,6 +19,7 @@ from news_trade.graph.pipeline import (
 from news_trade.services.event_bus import EventBus
 
 EXPECTED_NODES = {
+    "portfolio_fetcher",
     "news_ingestor",
     "market_data",
     "sentiment_analyst",

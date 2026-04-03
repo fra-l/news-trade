@@ -9,6 +9,7 @@ compute their stage, write results back, and return the updated state.
 
 | Agent | File | Status |
 |---|---|---|
+| `PortfolioFetcherAgent` | `portfolio_fetcher.py` | **Done — pipeline entry point; fetches live equity, positions, and drawdown from Alpaca each cycle** |
 | `NewsIngestorAgent` | `news_ingestor.py` | Done |
 | `MarketDataAgent` | `market_data.py` | Done |
 | `SentimentAnalystAgent` | `sentiment_analyst.py` | Done |
@@ -47,6 +48,7 @@ lets the runtime watchlist update between cycles without a restart.
 
 | Agent | Reads | Writes |
 |---|---|---|
+| `PortfolioFetcherAgent` | `errors` (preserves existing) | `portfolio`, `errors` |
 | `NewsIngestorAgent` | `last_poll` | `news_events`, `errors` |
 | `MarketDataAgent` | `news_events` | `market_context` (dict[ticker → MarketSnapshot]) |
 | `SentimentAnalystAgent` | `news_events`, `estimates` (optional) | `sentiment_results` |
@@ -66,6 +68,8 @@ Full `PipelineState` schema lives in `graph/state.py`.
 ## Pipeline Topology
 
 ```
+PortfolioFetcherAgent  (always runs — fetches live equity + positions from Alpaca)
+    ↓
 NewsIngestorAgent
     │ news_events empty? → END
     ↓
@@ -90,6 +94,33 @@ approved signals.
 4. Register the new node in `graph/pipeline.py` and add it to `build_pipeline()`.
 5. Add routing edge if the agent can short-circuit downstream.
 6. Raise `NotImplementedError` for unimplemented sub-methods (never silently pass).
+
+---
+
+## Implemented: `PortfolioFetcherAgent` ✅
+
+Runs as the **first node** in the LangGraph pipeline on every cycle, before any news
+ingestion. Ensures `portfolio` in `PipelineState` always contains live broker data so
+that `RiskManagerAgent` checks (drawdown halt, size cap, position count) operate on
+real figures rather than zero-equity defaults.
+
+Constructor: `settings`, `event_bus`, `alpaca_client: TradingClient | None`
+(None-safe — follows the same pattern as `HaltHandlerAgent`).
+
+`run(state)`:
+1. If `alpaca_client is None` → return `{"portfolio": PortfolioState(equity=0.0, cash=0.0)}` + WARNING
+2. `asyncio.to_thread(alpaca_client.get_account)` → equity, cash, buying_power, last_equity
+3. `asyncio.to_thread(alpaca_client.get_all_positions)` → list of open positions
+4. Drawdown formula: `max(0, -(equity - last_equity) / last_equity)` using Alpaca's
+   `account.last_equity` (equity at previous day's close) — no external watermark storage needed
+5. Maps each alpaca position to internal `Position` via module-level `_map_position()`
+6. Returns `{"portfolio": PortfolioState(...)}`
+
+On any Alpaca error: logs WARNING, appends to `errors`, returns empty `PortfolioState`
+(graceful degradation — pipeline continues with risk checks silently disabled).
+
+All alpaca-py numeric fields are Decimal strings; cast with `float()`.
+`AlpacaPosition.current_price` may be `None` when the market is closed; defaults to `0.0`.
 
 ---
 

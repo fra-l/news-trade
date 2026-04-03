@@ -95,6 +95,8 @@ tests/                     # pytest suite — see tests/CLAUDE.md for convention
 ## Pipeline Architecture
 
 ```
+PortfolioFetcherAgent   ← NEW: fetches live equity + positions from Alpaca (always runs)
+    ↓
 NewsIngestorAgent
     │ (no new news? → END)
     ↓
@@ -115,6 +117,10 @@ END
 `PipelineState` (`graph/state.py`) is a `TypedDict` containing: `news_events`,
 `market_context`, `sentiment_results`, `trade_signals`, `approved_signals`,
 `rejected_signals`, `orders`, `portfolio`, `errors`, `system_halted`.
+
+`portfolio` is populated by `PortfolioFetcherAgent` (first node) with live data from
+Alpaca each cycle. All `RiskManagerAgent` checks (drawdown halt, size cap, position
+concentration) operate on real figures.
 
 ---
 
@@ -215,6 +221,7 @@ unless absolutely necessary with a comment explaining why.
 | yfinance + Polygon market providers | Done |
 | Claude + Keyword sentiment providers | Done |
 | Provider factory functions | Done |
+| **PortfolioFetcherAgent — pipeline entry point** | **Done — fetches live equity, positions, and drawdown from Alpaca each cycle; activates all RiskManagerAgent checks** |
 | NewsIngestorAgent | Done |
 | MarketDataAgent | Done |
 | SentimentAnalystAgent | Done |
