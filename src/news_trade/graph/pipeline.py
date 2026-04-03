@@ -14,6 +14,7 @@ from news_trade.agents.execution import ExecutionAgent
 from news_trade.agents.halt_handler import HaltHandlerAgent
 from news_trade.agents.market_data import MarketDataAgent
 from news_trade.agents.news_ingestor import NewsIngestorAgent
+from news_trade.agents.portfolio_fetcher import PortfolioFetcherAgent
 from news_trade.agents.risk_manager import RiskManagerAgent
 from news_trade.agents.sentiment_analyst import SentimentAnalystAgent
 from news_trade.agents.signal_generator import SignalGeneratorAgent
@@ -35,6 +36,7 @@ from news_trade.services.stage1_repository import Stage1Repository
 from news_trade.services.watchlist_manager import WatchlistManager
 
 # Node name constants
+PORTFOLIO = "portfolio_fetcher"
 NEWS = "news_ingestor"
 MARKET = "market_data"
 SENTIMENT = "sentiment_analyst"
@@ -49,6 +51,8 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
 
     Graph topology::
 
+        portfolio_fetcher  (always runs — fetches live equity + positions)
+            ↓
         news_ingestor
             ↓ (has events?)
         market_data
@@ -116,6 +120,11 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
         secret_key=settings.alpaca_secret_key,
         paper=True,
     )
+    portfolio_agent = PortfolioFetcherAgent(
+        settings,
+        event_bus,
+        alpaca_client=alpaca_client,
+    )
     exec_session = build_session_factory(settings)()
     exec_agent = ExecutionAgent(
         settings,
@@ -136,6 +145,7 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     graph = StateGraph(PipelineState)
 
     # Register nodes
+    graph.add_node(PORTFOLIO, portfolio_agent.run)
     graph.add_node(NEWS, news_agent.run)
     graph.add_node(MARKET, market_agent.run)
     graph.add_node(SENTIMENT, sentiment_agent.run)
@@ -144,8 +154,9 @@ def build_pipeline(settings: Settings, event_bus: EventBus) -> StateGraph:
     graph.add_node(EXECUTION, exec_agent.run)
     graph.add_node(HALT, halt_agent.run)
 
-    # Entry point
-    graph.set_entry_point(NEWS)
+    # Entry point — portfolio fetch always runs first so risk checks use live data
+    graph.set_entry_point(PORTFOLIO)
+    graph.add_edge(PORTFOLIO, NEWS)
 
     # Conditional: only proceed if news was found
     graph.add_conditional_edges(
