@@ -136,7 +136,7 @@ class TestCommandHandlers:
         await self.bot._cmd_status(update, _mock_context())
         text: str = update.effective_message.reply_text.call_args[0][0]
         assert "running" in text.lower()
-        assert "automatic" in text.lower()
+        assert "as of" in text.lower()
 
     async def test_portfolio_empty_db_replies(self) -> None:
         update = _mock_update()
@@ -345,6 +345,23 @@ class TestStop:
 # ---------------------------------------------------------------------------
 
 
+def _mock_callback_query(user_id: int = 12345) -> MagicMock:
+    """Build a MagicMock CallbackQuery with the given user_id."""
+    query = MagicMock()
+    query.from_user = MagicMock()
+    query.from_user.id = user_id
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+    return query
+
+
+def _mock_update_with_query(user_id: int = 12345) -> MagicMock:
+    """Build a MagicMock Update carrying a callback query (button tap)."""
+    update = MagicMock()
+    update.callback_query = _mock_callback_query(user_id)
+    return update
+
+
 class TestStopCommand:
     """/stop command handler — operator-initiated loop exit + position closure."""
 
@@ -361,15 +378,47 @@ class TestStopCommand:
         self.app = _mock_application()
         self.bot._app = self.app
 
-    async def test_stop_authorised_calls_callback(self) -> None:
-        """Authorised /stop invokes the stop_callback and sends a confirmation."""
+    async def test_stop_sends_confirmation_buttons(self) -> None:
+        """/stop sends a message with an inline keyboard; callback not yet called."""
         update = _mock_update(chat_id=12345)
         await self.bot._cmd_stop(update, _mock_context())
 
-        assert self.callback_called
+        assert not self.callback_called
         update.effective_message.reply_text.assert_called_once()
-        text: str = update.effective_message.reply_text.call_args[0][0]
-        assert "stop" in text.lower() or "closing" in text.lower()
+        call_kwargs = update.effective_message.reply_text.call_args
+        # reply_markup keyword arg must be present (the inline keyboard)
+        assert call_kwargs.kwargs.get("reply_markup") is not None
+        text: str = call_kwargs.args[0]
+        assert "sure" in text.lower()
+
+    async def test_confirm_button_executes_stop(self) -> None:
+        """Tapping 'Yes, stop & close all' calls the callback and edits the message."""
+        update = _mock_update_with_query(user_id=12345)
+        await self.bot._cb_stop_confirm(update, _mock_context())
+
+        assert self.callback_called
+        update.callback_query.answer.assert_called_once()
+        update.callback_query.edit_message_text.assert_called_once()
+
+    async def test_cancel_button_does_not_execute_stop(self) -> None:
+        """Tapping 'Cancel' does NOT call the callback and edits the message."""
+        update = _mock_update_with_query(user_id=12345)
+        await self.bot._cb_stop_cancel(update, _mock_context())
+
+        assert not self.callback_called
+        update.callback_query.answer.assert_called_once()
+        update.callback_query.edit_message_text.assert_called_once()
+        text: str = update.callback_query.edit_message_text.call_args.args[0]
+        assert "cancelled" in text.lower()
+
+    async def test_confirm_button_unauthorised_ignored(self) -> None:
+        """Callback query from wrong user_id is silently dismissed."""
+        update = _mock_update_with_query(user_id=99999)
+        await self.bot._cb_stop_confirm(update, _mock_context())
+
+        assert not self.callback_called
+        update.callback_query.answer.assert_called_once()
+        update.callback_query.edit_message_text.assert_not_called()
 
     async def test_stop_unauthorised_ignored(self) -> None:
         """Unauthorised /stop: callback is NOT called and no reply is sent."""
@@ -386,7 +435,7 @@ class TestStopCommand:
         update = _mock_update(chat_id=12345)
         await bot._cmd_stop(update, _mock_context())
 
-        assert not self.callback_called  # the fixture callback was never assigned here
+        assert not self.callback_called
         update.effective_message.reply_text.assert_called_once()
         text: str = update.effective_message.reply_text.call_args[0][0]
         assert "not available" in text.lower()

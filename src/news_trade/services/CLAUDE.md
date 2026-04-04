@@ -256,15 +256,27 @@ Redis URL from `settings.redis_url`.
 ## `telegram_bot.py` — Operator Observer + Stop Control (Telegram)
 
 ```python
-bot = TelegramBotService(settings, session_factory, stop_callback=None)
+bot = TelegramBotService(settings, session_factory, stop_callback=None, get_state=None)
 await bot.start(event_bus)   # call once at startup; no-op if token/chat_id unset
 await bot.stop()             # call in the finally block
 ```
 
-`stop_callback` is an optional `Callable[[], None]` called when the operator sends `/stop`.
-In `main.py` it sets `shutdown_event` (exits the polling loop) and `operator_stop_event`
-(triggers position cleanup in the `finally` block). When `None`, `/stop` replies
-"Stop not available." and takes no action.
+`stop_callback` is an optional `Callable[[], None]` invoked when the operator confirms the
+stop via the inline button. In `main.py` it sets `shutdown_event` (exits the polling loop)
+and `operator_stop_event` (triggers position cleanup in the `finally` block). When `None`,
+`/stop` replies "Stop not available." and no buttons are shown.
+
+The stop flow uses two `CallbackQueryHandler` instances registered in `start()`:
+`_cb_stop_confirm` (pattern `"^stop_confirm$"`) and `_cb_stop_cancel` (pattern
+`"^stop_cancel$"`). Both call `query.answer()` to clear the button spinner and
+`query.edit_message_text()` to replace the confirmation message in-place. Auth is checked
+via `callback_query.from_user.id` against `settings.telegram_chat_id`.
+
+`get_state` is an optional `Callable[[], dict[str, Any]]` that returns a snapshot dict with
+keys `"portfolio"` (`PortfolioState | None`) and `"system_halted"` (`bool`). In `main.py`
+this is backed by `_state_ref`, updated after each `run_cycle()` call. When `None` or when
+the returned `portfolio` is `None` (before the first cycle), `/status` shows a graceful
+"waiting for first cycle" message.
 
 **Disabled** when `settings.telegram_bot_token == ""` or `settings.telegram_chat_id == 0`.
 Zero impact on non-Telegram deploys. The trading pipeline runs fully automatically —
@@ -285,7 +297,7 @@ is submitted. `EventBus.subscribe()` accepts multiple channel names in one call.
 | Command | Behaviour |
 |---|---|
 | `/help` | List available commands |
-| `/status` | System running state + timestamp |
-| `/portfolio` | Last 10 `OrderRow` entries from SQLite (ticker, side, qty, status, fill price) |
-| `/signals [N]` | Last N `TradeSignalRow` entries (default 5, max 20) |
-| `/stop` | Cancels all pending Alpaca orders, closes all open positions, marks Stage 1 positions EXPIRED, then exits the polling loop; sends "Stop complete" confirmation when cleanup finishes |
+| `/status` | Portfolio equity, daily P&L (+ %), drawdown, cash, buying power; open positions with per-position and total unrealized P&L; pending Stage 1 (EARN_PRE) positions from DB; prominent `*** SYSTEM HALTED ***` warning if halted |
+| `/portfolio` | Today's order count (buys/sells split); open Stage 1 positions (ticker, direction, report date, size %); last 10 `OrderRow` entries |
+| `/signals [N]` | Today's approved/rejected signal count; last N `TradeSignalRow` entries (default 5, max 20) |
+| `/stop` | Sends a confirmation message with two inline buttons: **"Yes, stop & close all"** and **"Cancel"**. Tapping confirm cancels all pending Alpaca orders, closes all open positions, marks Stage 1 positions EXPIRED, then exits the polling loop; sends "Stop complete" when done. Tapping cancel dismisses silently. Both buttons are auth-checked against `telegram_chat_id`. |

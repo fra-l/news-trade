@@ -10,6 +10,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from alpaca.trading.client import TradingClient
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -179,10 +180,17 @@ async def main(
     event_bus = EventBus(settings)
     await event_bus.connect()
 
+    # Shared state snapshot — updated after each pipeline cycle so the Telegram
+    # bot can surface portfolio and halt state in /status without querying Alpaca.
+    _state_ref: dict[str, Any] = {"portfolio": None, "system_halted": False}
+
     telegram_bot: TelegramBotService | None = None
     if settings.telegram_bot_token and settings.telegram_chat_id:
         telegram_bot = TelegramBotService(
-            settings, build_session_factory(settings), stop_callback=_request_stop
+            settings,
+            build_session_factory(settings),
+            stop_callback=_request_stop,
+            get_state=lambda: _state_ref,
         )
         await telegram_bot.start(event_bus)
 
@@ -300,6 +308,8 @@ async def main(
                 initial_state = {}  # type: ignore[typeddict-item]
 
             last_state = await run_cycle(pipeline, initial_state)
+            _state_ref["portfolio"] = last_state.get("portfolio")
+            _state_ref["system_halted"] = bool(last_state.get("system_halted", False))
             cycle_count += 1
             session_errors.extend(last_state.get("errors", []))
 
