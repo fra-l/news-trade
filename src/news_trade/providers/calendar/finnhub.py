@@ -6,6 +6,7 @@ Provides report date, EPS estimate, and timing (bmo/amc).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import date, datetime
 
@@ -95,10 +96,8 @@ def _item_to_entry(item: dict) -> EarningsCalendarEntry | None:
     eps_estimate: float | None = None
     raw_eps = item.get("epsEstimate")
     if raw_eps is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             eps_estimate = float(raw_eps)
-        except (TypeError, ValueError):
-            pass
 
     return EarningsCalendarEntry(
         ticker=symbol,

@@ -5,11 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from news_trade.agents.base import BaseAgent
-from news_trade.providers import (
-    get_market_data_provider,
-    get_news_provider,
-    get_sentiment_provider,
-)
 
 if TYPE_CHECKING:
     from langgraph.graph import StateGraph

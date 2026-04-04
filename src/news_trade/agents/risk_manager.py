@@ -94,7 +94,8 @@ class RiskManagerAgent(BaseAgent):
                 )
                 if self.settings.risk_dry_run:
                     self.logger.warning(
-                        "Risk: %-6s  risk_dry_run=True — approving despite rejection: %s",
+                        "Risk: %-6s  risk_dry_run=True — approving despite "
+                        "rejection: %s",
                         signal.ticker,
                         reason,
                     )

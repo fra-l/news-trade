@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -33,12 +33,17 @@ class PolygonPaidMarketProvider:
         return "polygon_paid"
 
     async def get_snapshot(self, ticker: str) -> MarketSnapshot:
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         from_ = (today - timedelta(days=45)).isoformat()
         to = today.isoformat()
 
         url = _AGGS_URL.format(ticker=ticker, from_=from_, to=to)
-        params = {"adjusted": "true", "sort": "asc", "limit": 50, "apiKey": self._api_key}
+        params = {
+            "adjusted": "true",
+            "sort": "asc",
+            "limit": 50,
+            "apiKey": self._api_key,
+        }
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(url, params=params)
@@ -53,7 +58,7 @@ class PolygonPaidMarketProvider:
         for r in results:
             bars.append(
                 OHLCVBar(
-                    timestamp=datetime.fromtimestamp(r["t"] / 1000, tz=timezone.utc),
+                    timestamp=datetime.fromtimestamp(r["t"] / 1000, tz=UTC),
                     open=float(r["o"]),
                     high=float(r["h"]),
                     low=float(r["l"]),
@@ -65,7 +70,11 @@ class PolygonPaidMarketProvider:
 
         latest = bars[-1]
         closes = [b.close for b in bars]
-        log_returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))] if len(closes) > 1 else []
+        log_returns = (
+            [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+            if len(closes) > 1
+            else []
+        )
         if log_returns:
             n = len(log_returns)
             mean = sum(log_returns) / n
@@ -81,7 +90,7 @@ class PolygonPaidMarketProvider:
             vwap=latest.vwap,
             volatility_20d=volatility_20d,
             bars=bars,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
         )
 
     async def get_snapshots(self, tickers: list[str]) -> dict[str, MarketSnapshot]:
@@ -89,6 +98,6 @@ class PolygonPaidMarketProvider:
         for ticker in tickers:
             try:
                 results[ticker] = await self.get_snapshot(ticker)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _logger.warning("Polygon paid snapshot failed for %s: %s", ticker, exc)
         return results

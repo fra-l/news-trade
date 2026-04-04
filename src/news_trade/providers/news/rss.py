@@ -14,7 +14,7 @@ import asyncio
 import logging
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
 import httpx
@@ -28,13 +28,38 @@ _MARKETWATCH_RSS = "https://feeds.content.dowjones.io/public/rss/mw_realtimehead
 _EDGAR_RSS = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&dateb=&owner=include&count=40&search_text=&output=atom"
 
 _KEYWORD_MAP: list[tuple[frozenset[str], EventType]] = [
-    (frozenset(["fda", "approval", "drug", "clinical", "trial"]), EventType.FDA_APPROVAL),
-    (frozenset(["merger", "acquisition", "acquires", "takeover", "buyout"]), EventType.MERGER_ACQUISITION),
+    (
+        frozenset(["fda", "approval", "drug", "clinical", "trial"]),
+        EventType.FDA_APPROVAL,
+    ),
+    (
+        frozenset(["merger", "acquisition", "acquires", "takeover", "buyout"]),
+        EventType.MERGER_ACQUISITION,
+    ),
     (frozenset(["sec", "10-k", "10-q", "8-k"]), EventType.SEC_FILING),
-    (frozenset(["analyst", "upgrade", "downgrade", "price target", "overweight", "underweight"]), EventType.ANALYST_RATING),
-    (frozenset(["guidance", "outlook", "forecast", "raises guidance", "lowers guidance"]), EventType.GUIDANCE),
-    (frozenset(["earnings", "eps", "revenue", "quarterly results", "net income"]), EventType.EARNINGS),
-    (frozenset(["fed", "rate hike", "inflation", "gdp", "unemployment", "macro"]), EventType.MACRO),
+    (
+        frozenset(
+            [
+                "analyst", "upgrade", "downgrade",
+                "price target", "overweight", "underweight",
+            ]
+        ),
+        EventType.ANALYST_RATING,
+    ),
+    (
+        frozenset(
+            ["guidance", "outlook", "forecast", "raises guidance", "lowers guidance"]
+        ),
+        EventType.GUIDANCE,
+    ),
+    (
+        frozenset(["earnings", "eps", "revenue", "quarterly results", "net income"]),
+        EventType.EARNINGS,
+    ),
+    (
+        frozenset(["fed", "rate hike", "inflation", "gdp", "unemployment", "macro"]),
+        EventType.MACRO,
+    ),
 ]
 
 
@@ -48,15 +73,15 @@ def _classify(headline: str) -> EventType:
 
 def _parse_dt(value: str) -> datetime:
     if not value:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     try:
         return parsedate_to_datetime(value)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
 def _extract_tickers_from_text(text: str, watchlist: set[str]) -> list[str]:
@@ -101,7 +126,7 @@ class RSSNewsProvider:
                     if item is not None and item.event_id not in seen_ids:
                         seen_ids.add(item.event_id)
                         events.append(item)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _logger.warning("yfinance news fetch failed for %s: %s", ticker, exc)
 
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -149,7 +174,12 @@ def _yfinance_article_to_event(article: dict, ticker: str) -> NewsEvent | None:
     if not title:
         return None
 
-    uid = article.get("id") or content.get("id") or content.get("canonicalUrl", {}).get("url") or title
+    uid = (
+        article.get("id")
+        or content.get("id")
+        or content.get("canonicalUrl", {}).get("url")
+        or title
+    )
     summary = content.get("summary") or ""
 
     # Publisher
@@ -166,9 +196,9 @@ def _yfinance_article_to_event(article: dict, ticker: str) -> NewsEvent | None:
     if pub_date_str:
         published_at = _parse_dt(pub_date_str)
     elif pub_ts:
-        published_at = datetime.fromtimestamp(int(pub_ts), tz=timezone.utc)
+        published_at = datetime.fromtimestamp(int(pub_ts), tz=UTC)
     else:
-        published_at = datetime.now(timezone.utc)
+        published_at = datetime.now(UTC)
 
     return NewsEvent(
         event_id=f"yfinance_news:{uid}",
@@ -196,8 +226,8 @@ def _parse_rss_feed(xml_text: str, source: str) -> list[NewsEvent]:
 
     events: list[NewsEvent] = []
     for item in items:
-        def _text(tag: str) -> str:
-            el = item.find(tag) or item.find(f"atom:{tag}", ns)
+        def _text(tag: str, _item: ET.Element = item) -> str:
+            el = _item.find(tag) or _item.find(f"atom:{tag}", ns)
             return (el.text or "").strip() if el is not None else ""
 
         guid = _text("guid") or _text("id") or _text("link")

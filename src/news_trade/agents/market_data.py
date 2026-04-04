@@ -1,4 +1,7 @@
-"""MarketDataAgent — fetches OHLCV bars and volatility via an injected MarketDataProvider."""
+"""MarketDataAgent.
+
+Fetches OHLCV bars and volatility via an injected MarketDataProvider.
+"""
 
 from __future__ import annotations
 
@@ -34,11 +37,15 @@ class MarketDataAgent(BaseAgent):
             self.logger.debug("No tickers to fetch market data for")
             return {"market_context": {}}
 
-        self.logger.info("MarketData: fetching data for tickers=%s via %s", tickers, self._provider.name)
+        self.logger.info(
+            "MarketData: fetching data for tickers=%s via %s",
+            tickers,
+            self._provider.name,
+        )
 
         try:
             snapshots = await self._provider.get_snapshots(tickers)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.logger.error("Market data fetch failed: %s", exc)
             existing = state.get("errors") or []
             return {"market_context": {}, "errors": [*existing, str(exc)]}

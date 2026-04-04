@@ -5,7 +5,7 @@ Phase 2 premium news source.  Requires a Benzinga API key.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
 import httpx
@@ -15,13 +15,38 @@ from news_trade.models.events import EventType, NewsEvent
 _BENZINGA_NEWS_URL = "https://api.benzinga.com/api/v2/news"
 
 _KEYWORD_MAP: list[tuple[frozenset[str], EventType]] = [
-    (frozenset(["fda", "approval", "drug", "clinical", "trial"]), EventType.FDA_APPROVAL),
-    (frozenset(["merger", "acquisition", "acquires", "takeover", "buyout"]), EventType.MERGER_ACQUISITION),
+    (
+        frozenset(["fda", "approval", "drug", "clinical", "trial"]),
+        EventType.FDA_APPROVAL,
+    ),
+    (
+        frozenset(["merger", "acquisition", "acquires", "takeover", "buyout"]),
+        EventType.MERGER_ACQUISITION,
+    ),
     (frozenset(["sec", "10-k", "10-q", "8-k"]), EventType.SEC_FILING),
-    (frozenset(["analyst", "upgrade", "downgrade", "price target", "overweight", "underweight"]), EventType.ANALYST_RATING),
-    (frozenset(["guidance", "outlook", "forecast", "raises guidance", "lowers guidance"]), EventType.GUIDANCE),
-    (frozenset(["earnings", "eps", "revenue", "quarterly results", "net income"]), EventType.EARNINGS),
-    (frozenset(["fed", "rate hike", "inflation", "gdp", "unemployment", "macro"]), EventType.MACRO),
+    (
+        frozenset(
+            [
+                "analyst", "upgrade", "downgrade",
+                "price target", "overweight", "underweight",
+            ]
+        ),
+        EventType.ANALYST_RATING,
+    ),
+    (
+        frozenset(
+            ["guidance", "outlook", "forecast", "raises guidance", "lowers guidance"]
+        ),
+        EventType.GUIDANCE,
+    ),
+    (
+        frozenset(["earnings", "eps", "revenue", "quarterly results", "net income"]),
+        EventType.EARNINGS,
+    ),
+    (
+        frozenset(["fed", "rate hike", "inflation", "gdp", "unemployment", "macro"]),
+        EventType.MACRO,
+    ),
 ]
 
 
@@ -35,15 +60,15 @@ def _classify(headline: str) -> EventType:
 
 def _parse_dt(value: str) -> datetime:
     if not value:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     try:
         return parsedate_to_datetime(value)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     try:
         return datetime.fromisoformat(value)
     except ValueError:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
 class BenzingaNewsProvider:

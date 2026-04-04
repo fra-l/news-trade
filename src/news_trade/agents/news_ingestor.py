@@ -17,25 +17,38 @@ from news_trade.services.watchlist_manager import WatchlistManager
 
 # Ordered from most-specific to least-specific to avoid false matches
 _KEYWORD_MAP: list[tuple[frozenset[str], EventType]] = [
-    (frozenset(["fda", "approval", "drug", "clinical", "trial"]), EventType.FDA_APPROVAL),
+    (
+        frozenset(["fda", "approval", "drug", "clinical", "trial"]),
+        EventType.FDA_APPROVAL,
+    ),
     (
         frozenset(["merger", "acquisition", "acquires", "takeover", "buyout"]),
         EventType.MERGER_ACQUISITION,
     ),
     (frozenset(["sec", "10-k", "10-q", "8-k"]), EventType.SEC_FILING),
     (
-        frozenset(["analyst", "upgrade", "downgrade", "price target", "overweight", "underweight"]),
+        frozenset(
+            [
+                "analyst", "upgrade", "downgrade",
+                "price target", "overweight", "underweight",
+            ]
+        ),
         EventType.ANALYST_RATING,
     ),
     (
-        frozenset(["guidance", "outlook", "forecast", "raises guidance", "lowers guidance"]),
+        frozenset(
+            ["guidance", "outlook", "forecast", "raises guidance", "lowers guidance"]
+        ),
         EventType.GUIDANCE,
     ),
     (
         frozenset(["earnings", "eps", "revenue", "quarterly results", "net income"]),
         EventType.EARNINGS,
     ),
-    (frozenset(["fed", "rate hike", "inflation", "gdp", "unemployment", "macro"]), EventType.MACRO),
+    (
+        frozenset(["fed", "rate hike", "inflation", "gdp", "unemployment", "macro"]),
+        EventType.MACRO,
+    ),
 ]
 
 

@@ -192,7 +192,11 @@ class SignalGeneratorAgent(BaseAgent):
                 signal.conviction,
                 signal.confidence_score or 0.0,
                 "PASS" if signal.passed_confidence_gate else "FAIL",
-                f"  reason={signal.rejection_reason!r}" if not signal.passed_confidence_gate else "",
+                (
+                    f"  reason={signal.rejection_reason!r}"
+                    if not signal.passed_confidence_gate
+                    else ""
+                ),
             )
 
             if signal.passed_confidence_gate:

@@ -25,7 +25,7 @@ class EventType(StrEnum):
     OTHER = "other"
 
     # --- Tier 1: Earnings & Guidance (fine-grained) ---
-    EARN_PRE = "earn_pre"           # Pre-earnings positioning (2–5 days before report)
+    EARN_PRE = "earn_pre"           # Pre-earnings positioning (2-5 days before report)
     EARN_BEAT = "earn_beat"         # EPS/rev above consensus + positive guidance
     EARN_MISS = "earn_miss"         # EPS/rev below consensus or guidance cut
     EARN_MIXED = "earn_mixed"       # Beat one metric, miss other, or flat guidance
@@ -48,9 +48,9 @@ class EventType(StrEnum):
     REG_LICENSE = "reg_license"     # Operating license granted or revoked
 
     # --- Tier 4: Sector Contagion ---
-    SECTOR_BEAT_SPILL = "sector_beat_spill"   # Major peer beats; others not yet reported
+    SECTOR_BEAT_SPILL = "sector_beat_spill" # Major peer beats; others not yet reported
     SECTOR_MISS_SPILL = "sector_miss_spill"   # Major peer misses
-    SUPPLY_CHAIN = "supply_chain"             # Supplier/customer earnings imply demand shift
+    SUPPLY_CHAIN = "supply_chain"   # Supplier/customer earnings imply demand shift
 
 
 class NewsEvent(BaseModel):

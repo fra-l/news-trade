@@ -83,10 +83,16 @@ class TestClassifyEventType:
         [
             ("AAPL Reports Record Earnings and EPS Beat", EventType.EARNINGS),
             ("FDA Approves New Drug for Alzheimer's", EventType.FDA_APPROVAL),
-            ("Microsoft Acquisition of Gaming Studio Confirmed", EventType.MERGER_ACQUISITION),
+            (
+                "Microsoft Acquisition of Gaming Studio Confirmed",
+                EventType.MERGER_ACQUISITION,
+            ),
             ("Fed Signals Rate Hike Amid Rising Inflation", EventType.MACRO),
             ("Apple Raises Guidance for Next Quarter", EventType.GUIDANCE),
-            ("Goldman Sachs Analyst Upgrade of NVDA to Overweight", EventType.ANALYST_RATING),
+            (
+                "Goldman Sachs Analyst Upgrade of NVDA to Overweight",
+                EventType.ANALYST_RATING,
+            ),
             ("Tesla Files 10-K with SEC", EventType.SEC_FILING),
             ("Company Announces New Product Line", EventType.OTHER),
         ],

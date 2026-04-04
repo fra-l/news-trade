@@ -6,7 +6,7 @@ Free tier: 60 req/min.  Requires FINNHUB_API_KEY.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -17,13 +17,38 @@ _logger = logging.getLogger(__name__)
 _BASE_URL = "https://finnhub.io/api/v1"
 
 _KEYWORD_MAP: list[tuple[frozenset[str], EventType]] = [
-    (frozenset(["fda", "approval", "drug", "clinical", "trial"]), EventType.FDA_APPROVAL),
-    (frozenset(["merger", "acquisition", "acquires", "takeover", "buyout"]), EventType.MERGER_ACQUISITION),
+    (
+        frozenset(["fda", "approval", "drug", "clinical", "trial"]),
+        EventType.FDA_APPROVAL,
+    ),
+    (
+        frozenset(["merger", "acquisition", "acquires", "takeover", "buyout"]),
+        EventType.MERGER_ACQUISITION,
+    ),
     (frozenset(["sec", "10-k", "10-q", "8-k"]), EventType.SEC_FILING),
-    (frozenset(["analyst", "upgrade", "downgrade", "price target", "overweight", "underweight"]), EventType.ANALYST_RATING),
-    (frozenset(["guidance", "outlook", "forecast", "raises guidance", "lowers guidance"]), EventType.GUIDANCE),
-    (frozenset(["earnings", "eps", "revenue", "quarterly results", "net income"]), EventType.EARNINGS),
-    (frozenset(["fed", "rate hike", "inflation", "gdp", "unemployment", "macro"]), EventType.MACRO),
+    (
+        frozenset(
+            [
+                "analyst", "upgrade", "downgrade",
+                "price target", "overweight", "underweight",
+            ]
+        ),
+        EventType.ANALYST_RATING,
+    ),
+    (
+        frozenset(
+            ["guidance", "outlook", "forecast", "raises guidance", "lowers guidance"]
+        ),
+        EventType.GUIDANCE,
+    ),
+    (
+        frozenset(["earnings", "eps", "revenue", "quarterly results", "net income"]),
+        EventType.EARNINGS,
+    ),
+    (
+        frozenset(["fed", "rate hike", "inflation", "gdp", "unemployment", "macro"]),
+        EventType.MACRO,
+    ),
 ]
 
 
@@ -58,7 +83,7 @@ class FinnhubNewsProvider:
         since: datetime | None = None,
     ) -> list[NewsEvent]:
         """Fetch company news for each ticker from Finnhub."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         from_date = (since.date() if since else (now - timedelta(days=3)).date())
         to_date = now.date()
 
@@ -102,9 +127,9 @@ def _article_to_event(article: dict, ticker: str) -> NewsEvent | None:
         return None
     pub_ts = article.get("datetime")
     published_at = (
-        datetime.fromtimestamp(int(pub_ts), tz=timezone.utc)
+        datetime.fromtimestamp(int(pub_ts), tz=UTC)
         if pub_ts
-        else datetime.now(timezone.utc)
+        else datetime.now(UTC)
     )
     return NewsEvent(
         event_id=f"finnhub:{article_id}",

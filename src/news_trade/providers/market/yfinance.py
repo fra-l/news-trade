@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from news_trade.models.market import MarketSnapshot, OHLCVBar
 
@@ -33,7 +33,7 @@ class YFinanceMarketProvider:
         for ts, row in hist.iterrows():
             bars.append(
                 OHLCVBar(
-                    timestamp=ts.to_pydatetime().replace(tzinfo=timezone.utc),
+                    timestamp=ts.to_pydatetime().replace(tzinfo=UTC),
                     open=float(row["Open"]),
                     high=float(row["High"]),
                     low=float(row["Low"]),
@@ -57,7 +57,7 @@ class YFinanceMarketProvider:
             atr_14d=atr_14d,
             relative_volume=relative_volume,
             bars=bars,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
         )
 
     async def get_snapshots(self, tickers: list[str]) -> dict[str, MarketSnapshot]:
@@ -66,7 +66,7 @@ class YFinanceMarketProvider:
         for ticker in tickers:
             try:
                 results[ticker] = await self.get_snapshot(ticker)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _logger.warning("yfinance snapshot failed for %s: %s", ticker, exc)
         return results
 
@@ -76,7 +76,6 @@ def _compute_volatility(bars: list[OHLCVBar]) -> float:
     closes = [b.close for b in bars]
     if len(closes) < 2:
         return 0.0
-    import math
     log_returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
     n = len(log_returns)
     mean = sum(log_returns) / n
