@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import subprocess
 import sys
@@ -90,7 +91,8 @@ def _load_replay_events(settings: Settings, ticker: str, limit: int) -> list[New
 
 async def run_cycle(pipeline, initial_state: PipelineState) -> PipelineState:
     """Execute a single pipeline cycle and return the resulting state."""
-    result = await pipeline.ainvoke(initial_state)
+    run_name = f"cycle-{datetime.now(tz=UTC).strftime('%Y%m%d-%H%M%S')}"
+    result = await pipeline.ainvoke(initial_state, config={"run_name": run_name})
     return result
 
 
@@ -109,6 +111,19 @@ async def main(
                       startup summary before entering the main loop.
     """
     settings = get_settings()
+
+    # LangSmith — must be set in os.environ before the pipeline is built;
+    # pydantic-settings already read the .env file so we push the values out.
+    if settings.langchain_tracing_v2 and settings.langchain_api_key:
+        os.environ["LANGCHAIN_TRACING_V2"] = "true"
+        os.environ["LANGCHAIN_API_KEY"] = settings.langchain_api_key
+        os.environ["LANGCHAIN_PROJECT"] = settings.langchain_project
+        os.environ["LANGCHAIN_ENDPOINT"] = settings.langchain_endpoint
+        logger.info(
+            "LangSmith tracing enabled  project=%s  endpoint=%s",
+            settings.langchain_project,
+            settings.langchain_endpoint,
+        )
 
     try:
         git_hash = subprocess.check_output(

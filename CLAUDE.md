@@ -161,6 +161,10 @@ to `.env` before running.
 | `RISK_DRY_RUN` | `false` | Log risk rejections without blocking — calibration mode |
 | `TELEGRAM_BOT_TOKEN` | `""` | Telegram Bot API token from @BotFather (empty = bot disabled) |
 | `TELEGRAM_CHAT_ID` | `0` | Operator chat ID (0 = bot disabled) |
+| `LANGCHAIN_TRACING_V2` | `false` | Enable LangSmith tracing; set `true` to activate |
+| `LANGCHAIN_API_KEY` | `""` | LangSmith API key from smith.langchain.com |
+| `LANGCHAIN_PROJECT` | `news-trade` | LangSmith project name for grouping runs |
+| `LANGCHAIN_ENDPOINT` | `https://api.smith.langchain.com` | LangSmith ingestion endpoint |
 
 ---
 
@@ -264,6 +268,7 @@ unless absolutely necessary with a comment explaining why.
 | **Version logging** | **Done — `main.py` logs `version`, short git commit hash, Python version, and `DATABASE_URL` at startup** |
 | **Session reporting (`SessionReporter`)** | **Done — writes `data/sessions/session_YYYYMMDD_HHMMSS.json` on exit; `--resume-session` / `--session-file` CLI flags load a previous session at startup and log a summary with system-halt and error warnings** |
 | **Telegram Bot (`TelegramBotService`)** | **Done — observer + operator stop: push notifications (drawdown halt, trade executed via Redis `trade_executed` channel); `/status` shows live portfolio equity, daily P&L, drawdown, cash, open positions with unrealized P&L, pending Stage 1 positions, and halt warning; `/portfolio` shows today's order summary + Stage 1 positions + last 10 orders; `/signals` shows today's approved/rejected count + last N signals; `/stop` shows inline confirmation buttons ("Yes, stop & close all" / "Cancel") — confirm cancels all orders, closes all positions, exits loop; disabled when token/chat_id unset** |
+| **LangSmith tracing** | **Done — opt-in via `LANGCHAIN_TRACING_V2=true` + `LANGCHAIN_API_KEY`; settings propagated to `os.environ` before pipeline build; each cycle tagged with `run_name=cycle-YYYYMMDD-HHMMSS`; full node I/O, LLM call inspector, latency waterfall, and token cost visible at smith.langchain.com** |
 
 The full pipeline is now operational end-to-end for all event types. `SignalGeneratorAgent`
 implements the complete EARN_\* two-stage logic (Pattern D): EARN_PRE sizes from the

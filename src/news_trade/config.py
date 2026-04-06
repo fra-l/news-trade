@@ -220,6 +220,24 @@ class Settings(BaseSettings):
         description="Telegram chat ID to send messages to (0 = bot disabled)",
     )
 
+    # --- LangSmith observability (optional) ---
+    langchain_tracing_v2: bool = Field(
+        default=False,
+        description="Enable LangSmith tracing (set LANGCHAIN_TRACING_V2=true)",
+    )
+    langchain_api_key: str = Field(
+        default="",
+        description="LangSmith API key from smith.langchain.com",
+    )
+    langchain_project: str = Field(
+        default="news-trade",
+        description="LangSmith project name for grouping runs",
+    )
+    langchain_endpoint: str = Field(
+        default="https://api.smith.langchain.com",
+        description="LangSmith ingestion endpoint (default is the hosted service)",
+    )
+
 
 def get_settings() -> Settings:
     """Return a cached Settings instance."""

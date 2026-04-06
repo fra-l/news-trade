@@ -491,3 +491,28 @@ Alternatives:
 
 This interacts with ISSUE-001 threshold values — worth resolving together.
 
+---
+
+## Future: Prometheus / Grafana Operational Dashboard
+
+**Priority:** P3 — Future
+**Depends on:** System running stably in paper/live trading
+**Labels:** `monitoring`, `infrastructure`
+
+When the system is operative and producing consistent trading activity, a
+Prometheus + Grafana dashboard will provide real-time operational metrics:
+cycle latency histograms, signal throughput, error rates, Alpaca order fill
+latency, and Redis event-bus queue depth.
+
+**Planned approach:**
+- Instrument each LangGraph node with `prometheus_client` counters/histograms
+  (node duration, error count, signal count per EventType)
+- Expose `/metrics` endpoint via a lightweight HTTP server (`prometheus_client.start_http_server`)
+- Grafana dashboard with pre-built panels for the 8-node pipeline
+- Alert rules for: drawdown halt triggered, >3 consecutive failed cycles,
+  Claude daily budget >80% consumed
+
+This is intentionally deferred — LangSmith already covers trace-level debugging
+for the development phase. Prometheus/Grafana adds value once the system is
+running 24/7 and operational anomaly detection becomes the priority.
+
