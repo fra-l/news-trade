@@ -1,7 +1,8 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "news_trade": "./src/news_trade/graph/studio.py:graph"
+    "news_trade": "./src/news_trade/graph/studio.py:graph",
+    "news_trade_replay": "./src/news_trade/graph/studio.py:replay_graph"
   },
   "env": ".env"
 }
