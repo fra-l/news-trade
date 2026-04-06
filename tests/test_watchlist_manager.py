@@ -262,7 +262,9 @@ class TestScanCandidates:
         dates = [e.report_date for e in result]
         assert dates == sorted(dates)
 
-    async def test_passes_watchlist_tickers_to_provider(self) -> None:
+    async def test_broad_scan_passes_empty_tickers_to_provider(self) -> None:
+        # scan_candidates performs a broad scan by passing [] so FMP returns all
+        # companies in the window (not just the current watchlist).
         primary = AsyncMock()
         primary.name = "mock_primary"
         primary.get_upcoming_earnings = AsyncMock(return_value=[])
@@ -271,7 +273,28 @@ class TestScanCandidates:
         )
         await manager.scan_candidates(date.today(), date.today() + timedelta(days=30))
         call_args = primary.get_upcoming_earnings.call_args
-        assert call_args[0][0] == ["AAPL", "MSFT"]
+        assert call_args[0][0] == []
+
+    async def test_falls_back_to_watchlist_on_broad_scan_error(self) -> None:
+        # When FMPBroadScanError is raised (free-tier 403), scan_candidates retries
+        # with the static watchlist tickers.
+        from news_trade.providers.calendar.fmp import FMPBroadScanError
+
+        primary = AsyncMock()
+        primary.name = "mock_primary"
+        # First call (broad scan) raises; second call (watchlist tickers) returns []
+        primary.get_upcoming_earnings = AsyncMock(
+            side_effect=[FMPBroadScanError("403 free tier"), []]
+        )
+        manager = _make_manager(
+            settings=self.settings,
+            session=self.session,
+            primary=primary,
+        )
+        await manager.scan_candidates(date.today(), date.today() + timedelta(days=30))
+        assert primary.get_upcoming_earnings.call_count == 2
+        second_call_tickers = primary.get_upcoming_earnings.call_args_list[1][0][0]
+        assert set(second_call_tickers) == {"AAPL", "MSFT"}
 
 
 # ---------------------------------------------------------------------------

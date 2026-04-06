@@ -2,6 +2,16 @@
 
 Uses the free-tier endpoint: GET /api/v3/earning_calendar
 Requires an FMP API key (250 req/day on free tier).
+
+Note on broad vs per-ticker queries
+------------------------------------
+Passing an empty ``tickers`` list performs a broad date-range scan that returns
+all companies reporting in the window.  This endpoint requires an FMP paid plan;
+free-tier keys receive HTTP 403.  When tickers are supplied, the same endpoint is
+queried and results are filtered client-side — this works on the free tier because
+FMP does not distinguish the request shape.
+``FMPBroadScanError`` is raised on 403 so callers can fall back gracefully
+to a per-ticker query.
 """
 
 from __future__ import annotations
@@ -13,6 +23,15 @@ from typing import Any
 from news_trade.models.calendar import EarningsCalendarEntry, ReportTiming
 
 logger = logging.getLogger(__name__)
+
+
+class FMPBroadScanError(Exception):
+    """Raised when a broad (no-ticker) FMP scan returns HTTP 403.
+
+    Indicates the API key is on the free tier, which requires explicit ticker
+    symbols.  Callers should retry with ``tickers=settings.watchlist``.
+    """
+
 
 _FMP_BASE_URL = "https://financialmodelingprep.com/api/v3"
 
@@ -45,27 +64,32 @@ class FMPCalendarProvider:
         to_date: date,
     ) -> list[EarningsCalendarEntry]:
         """Fetch earnings calendar from FMP and filter to the requested tickers."""
-        import aiohttp  # type: ignore[import-not-found]  # lazy import
+        import httpx  # type: ignore[import-not-found]  # lazy import
 
         url = (
             f"{self._base_url}/earning_calendar"
             f"?from={from_date}&to={to_date}&apikey={self._api_key}"
         )
-        watchlist = {t.upper() for t in tickers}
+        # Empty tickers = broad scan (return all companies in the date window).
+        watchlist = {t.upper() for t in tickers} if tickers else None
 
-        timeout = aiohttp.ClientTimeout(total=10)
         try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(url, timeout=timeout) as resp,
-            ):
-                if resp.status != 200:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url)
+                if resp.status_code == 403 and watchlist is None:
+                    raise FMPBroadScanError(
+                        "FMP broad calendar scan returned 403 — "
+                        "free-tier keys require explicit ticker symbols. "
+                        "Upgrade to FMP paid plan for broad market scans, "
+                        "or add tickers to WATCHLIST in .env."
+                    )
+                if resp.status_code != 200:
                     logger.warning(
                         "FMP calendar returned HTTP %d for window %s - %s",
-                        resp.status, from_date, to_date,
+                        resp.status_code, from_date, to_date,
                     )
                     return []
-                data: list[dict[str, Any]] = await resp.json()
+                data: list[dict[str, Any]] = resp.json()
         except Exception as exc:
             logger.warning("FMP calendar request failed: %s", exc)
             return []
@@ -73,7 +97,7 @@ class FMPCalendarProvider:
         entries: list[EarningsCalendarEntry] = []
         for item in data:
             symbol = (item.get("symbol") or "").upper()
-            if symbol not in watchlist:
+            if watchlist is not None and symbol not in watchlist:
                 continue
             entry = self._parse_item(item, symbol)
             if entry is not None:

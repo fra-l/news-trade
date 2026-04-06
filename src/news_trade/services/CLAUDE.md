@@ -197,10 +197,14 @@ tickers  = manager.load_selected()                 # most-recent row, or [] if n
 
 **Priority:** `load_selected()` → `settings.watchlist` (fallback when no DB entry).
 
-**`scan_candidates()`** uses the same primary/fallback provider pattern as
-`EarningsCalendarAgent`: primary first, fallback on empty or exception.  Filters to
-`EarningsCalendarEntry.is_candidate` (`1 ≤ days_until_report ≤ 31`); results sorted by
-`report_date` ascending.
+**`scan_candidates()`** performs a **broad market scan** by passing an empty ticker list
+to the primary `CalendarProvider` (Finnhub if `FINNHUB_API_KEY` is set, else FMP), which
+returns all companies reporting in the date window — not just the current watchlist.
+`FMPBroadScanError` (HTTP 403) is caught and retried with the static `settings.watchlist`
+tickers when the FMP key is on the free tier.  The last-resort fallback is
+`YFinanceCalendarProvider`, which always requires explicit tickers.
+Filters to `EarningsCalendarEntry.is_candidate` (`1 ≤ days_until_report ≤ 31`); results
+sorted by `report_date` ascending.
 
 **Session:** sync SQLAlchemy `Session` (same as `Stage1Repository`).  `save_selection()`
 appends a new row — old rows are retained for audit.

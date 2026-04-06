@@ -1,6 +1,7 @@
 """FinnhubCalendarProvider — earnings calendar from the Finnhub API.
 
-Free tier supports the /calendar/earnings endpoint.
+Free tier supports the /calendar/earnings endpoint for both broad market
+scans (no ticker filter) and per-ticker queries.
 Provides report date, EPS estimate, and timing (bmo/amc).
 """
 
@@ -27,7 +28,10 @@ _TIMING_MAP: dict[str, ReportTiming] = {
 class FinnhubCalendarProvider:
     """Fetches upcoming earnings from Finnhub /calendar/earnings.
 
-    One request per ticker; free tier supports this endpoint.
+    When ``tickers`` is empty, performs a single broad market scan (no ticker
+    filter) — the Finnhub free tier supports this.  When ``tickers`` is
+    non-empty, queries per ticker and merges results.
+
     Provides EPS estimates and pre/post-market timing — better than the
     yfinance fallback, which returns date only.
     """
@@ -47,9 +51,53 @@ class FinnhubCalendarProvider:
         from_date: date,
         to_date: date,
     ) -> list[EarningsCalendarEntry]:
-        """Return earnings entries for each ticker within the date window."""
-        entries: list[EarningsCalendarEntry] = []
+        """Return earnings entries within the date window.
 
+        When ``tickers`` is empty, performs a single broad scan returning all
+        companies reporting in the window (Finnhub free tier supports this).
+        When ``tickers`` is non-empty, queries each ticker individually.
+        """
+        if not tickers:
+            return await self._broad_scan(from_date, to_date)
+        return await self._per_ticker_scan(tickers, from_date, to_date)
+
+    async def _broad_scan(
+        self, from_date: date, to_date: date
+    ) -> list[EarningsCalendarEntry]:
+        """Single request without symbol filter — returns all companies."""
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{_BASE_URL}/calendar/earnings",
+                    params={
+                        "from": str(from_date),
+                        "to": str(to_date),
+                        "token": self._api_key,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPError as exc:
+            logger.warning("Finnhub broad calendar scan failed: %s", exc)
+            return []
+
+        entries: list[EarningsCalendarEntry] = []
+        for item in data.get("earningsCalendar") or []:
+            entry = _item_to_entry(item)
+            if entry is not None:
+                entries.append(entry)
+
+        logger.debug(
+            "Finnhub broad scan: %d entries for window %s - %s",
+            len(entries), from_date, to_date,
+        )
+        return entries
+
+    async def _per_ticker_scan(
+        self, tickers: list[str], from_date: date, to_date: date
+    ) -> list[EarningsCalendarEntry]:
+        """One request per ticker — used when a specific list is supplied."""
+        entries: list[EarningsCalendarEntry] = []
         async with httpx.AsyncClient(timeout=15.0) as client:
             for ticker in tickers:
                 try:
@@ -72,7 +120,6 @@ class FinnhubCalendarProvider:
                     logger.warning(
                         "Finnhub calendar fetch failed for %s: %s", ticker, exc
                     )
-
         return entries
 
 

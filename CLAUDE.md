@@ -135,7 +135,8 @@ to `.env` before running.
 | `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | — | Broker credentials |
 | `BENZINGA_API_KEY` | — | Premium news (optional) |
 | `POLYGON_API_KEY` | — | Premium market data (optional) |
-| `FMP_API_KEY` | — | FMP earnings calendar + estimates (optional; falls back to yfinance) |
+| `FINNHUB_API_KEY` | — | Finnhub earnings calendar — preferred; free tier supports broad market scan |
+| `FMP_API_KEY` | — | FMP earnings calendar (fallback) + historical EPS beat rates; falls back to yfinance when absent |
 | `REDIS_URL` | `redis://localhost:6379/0` | Event bus |
 | `DATABASE_URL` | `sqlite:///data/trades.db` | Persistence |
 | `WATCHLIST` | `["AAPL","MSFT","GOOGL","AMZN","TSLA"]` | Tickers to monitor |

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from news_trade.config import Settings
 from news_trade.models.calendar import EarningsCalendarEntry
 from news_trade.providers.base import CalendarProvider
+from news_trade.providers.calendar.fmp import FMPBroadScanError
 from news_trade.services.tables import WatchlistSelectionRow
 
 logger = logging.getLogger(__name__)
@@ -70,8 +71,19 @@ class WatchlistManager:
             Entries with ``1 <= days_until_report <= 31``, sorted by
             ``report_date`` ascending.
         """
-        tickers = self._settings.watchlist
-        entries = await self._fetch_with_fallback(tickers, from_date, to_date)
+        # Try a broad market scan first (empty tickers = no filter on FMP).
+        # FMP free-tier keys reject this with 403; catch FMPBroadScanError
+        # and fall back to per-ticker queries using the static watchlist.
+        try:
+            entries = await self._fetch_with_fallback([], from_date, to_date)
+        except FMPBroadScanError as exc:
+            logger.warning(
+                "%s — falling back to static watchlist: %s",
+                exc, list(self._settings.watchlist),
+            )
+            entries = await self._fetch_with_fallback(
+                list(self._settings.watchlist), from_date, to_date
+            )
         candidates = [e for e in entries if e.is_candidate]
         candidates.sort(key=lambda e: e.report_date)
         return candidates
@@ -131,6 +143,8 @@ class WatchlistManager:
             entries = await self._primary.get_upcoming_earnings(
                 tickers, from_date, to_date
             )
+        except FMPBroadScanError:
+            raise  # let scan_candidates handle the free-tier 403 fallback
         except Exception as exc:
             logger.warning(
                 "Primary calendar provider (%s) failed: %s — trying fallback",

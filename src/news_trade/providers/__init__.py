@@ -100,16 +100,19 @@ def get_estimates_provider(
 def get_calendar_provider(settings: Settings | None = None) -> CalendarProvider:
     """Return the primary CalendarProvider.
 
-    Returns FMPCalendarProvider when an FMP API key is configured (preferred —
-    provides eps_estimate and timing). Falls back to YFinanceCalendarProvider
-    when no key is set.
+    Priority: Finnhub (free tier, supports broad market scan) → FMP (paid,
+    richer EPS data) → yfinance (per-ticker only, no key required).
+
+    FMP is kept for EPS beat-rate estimates (``get_estimates_provider``) but
+    Finnhub is preferred for the calendar because its free tier supports
+    broad date-range scans without specifying individual tickers.
     """
     cfg = settings or get_settings()
-    if cfg.fmp_api_key:
-        from news_trade.providers.calendar.fmp import FMPCalendarProvider
-        return FMPCalendarProvider(api_key=cfg.fmp_api_key)
     if cfg.finnhub_api_key:
         from news_trade.providers.calendar.finnhub import FinnhubCalendarProvider
         return FinnhubCalendarProvider(api_key=cfg.finnhub_api_key)
+    if cfg.fmp_api_key:
+        from news_trade.providers.calendar.fmp import FMPCalendarProvider
+        return FMPCalendarProvider(api_key=cfg.fmp_api_key)
     from news_trade.providers.calendar.yfinance_provider import YFinanceCalendarProvider
     return YFinanceCalendarProvider()

@@ -61,11 +61,12 @@ async def main() -> None:
     candidates = await manager.scan_candidates(today, to_date)
 
     if not candidates:
+        print("No upcoming earnings found in the next 30 days.")
         print(
-            "No upcoming earnings found in the next 30 days"
-            " for the configured watchlist."
+            "Set FINNHUB_API_KEY (or FMP_API_KEY) for a broad market scan."
+            " Without a key, only the static watchlist is scanned:"
+            f" {settings.watchlist}"
         )
-        print(f"Static watchlist: {settings.watchlist}")
         session.close()
         return
 
