@@ -10,3 +10,4 @@ data/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.langgraph_api/
