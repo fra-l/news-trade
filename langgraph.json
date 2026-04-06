@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "news_trade": "./src/news_trade/graph/studio.py:graph"
+  },
+  "env": ".env"
+}

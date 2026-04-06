@@ -191,6 +191,11 @@ uv run mypy src/                 # Strict type checking — no implicit Any
 uv run pytest                    # Full test suite
 uv run pytest -x                 # Stop at first failure
 
+# LangGraph Studio (graph visualization + step-through debugging)
+uv run langgraph dev              # start local API server on http://localhost:2024
+# Open https://smith.langchain.com/studio → connect to http://localhost:2024
+# Note: on WSL2, localhost is auto-forwarded — use http://localhost:2024 from Windows browser
+
 # Database migrations (Alembic)
 uv run alembic upgrade head                          # Apply all pending migrations (also runs at startup)
 uv run alembic revision --autogenerate -m "name"     # Generate migration after editing tables.py
@@ -269,6 +274,7 @@ unless absolutely necessary with a comment explaining why.
 | **Session reporting (`SessionReporter`)** | **Done — writes `data/sessions/session_YYYYMMDD_HHMMSS.json` on exit; `--resume-session` / `--session-file` CLI flags load a previous session at startup and log a summary with system-halt and error warnings** |
 | **Telegram Bot (`TelegramBotService`)** | **Done — observer + operator stop: push notifications (drawdown halt, trade executed via Redis `trade_executed` channel); `/status` shows live portfolio equity, daily P&L, drawdown, cash, open positions with unrealized P&L, pending Stage 1 positions, and halt warning; `/portfolio` shows today's order summary + Stage 1 positions + last 10 orders; `/signals` shows today's approved/rejected count + last N signals; `/stop` shows inline confirmation buttons ("Yes, stop & close all" / "Cancel") — confirm cancels all orders, closes all positions, exits loop; disabled when token/chat_id unset** |
 | **LangSmith tracing** | **Done — opt-in via `LANGCHAIN_TRACING_V2=true` + `LANGCHAIN_API_KEY`; settings propagated to `os.environ` before pipeline build; each cycle tagged with `run_name=cycle-YYYYMMDD-HHMMSS`; full node I/O, LLM call inspector, latency waterfall, and token cost visible at smith.langchain.com** |
+| **LangGraph Studio** | **Done — `langgraph.json` + `graph/studio.py` stub entry point; `langgraph dev` serves the graph at localhost:2024; full node topology, intermediate state, and time-travel debugging via smith.langchain.com/studio; no Docker or Redis required** |
 
 The full pipeline is now operational end-to-end for all event types. `SignalGeneratorAgent`
 implements the complete EARN_\* two-stage logic (Pattern D): EARN_PRE sizes from the
