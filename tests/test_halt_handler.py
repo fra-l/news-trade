@@ -96,9 +96,11 @@ class TestHaltHandlerNoBroker:
         await self.agent.run({"portfolio": _make_portfolio()})
 
     @pytest.mark.asyncio
-    async def test_preserves_existing_errors_from_state(self) -> None:
+    async def test_returns_empty_errors_when_no_new_errors(self) -> None:
+        # With operator.add reducers, agents return only NEW errors.
+        # Prior errors are accumulated by the reducer, not preserved by the agent.
         result = await self.agent.run({"errors": ["prior-error"]})
-        assert "prior-error" in result["errors"]
+        assert result["errors"] == []
 
 
 # ---------------------------------------------------------------------------

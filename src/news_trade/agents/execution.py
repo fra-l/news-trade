@@ -64,7 +64,7 @@ class ExecutionAgent(BaseAgent):
         approved_signals: list[TradeSignal] = state.get("approved_signals", [])
         portfolio: PortfolioState | None = state.get("portfolio")
         orders: list[Order] = []
-        errors: list[str] = list(state.get("errors", []))
+        errors: list[str] = []
 
         for signal in approved_signals:
             try:

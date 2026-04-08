@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import date, datetime, timedelta
@@ -307,6 +308,18 @@ class SignalGeneratorAgent(BaseAgent):
         ticker = sentiment.ticker
         source = news_event.source if news_event else "unknown"
 
+        # Guard: skip if an OPEN Stage 1 position already exists for this ticker.
+        # EarningsTickerNode synthesises EARN_PRE events every cycle; without this guard
+        # a new Stage1 position would be created on every pipeline cycle.
+        existing = self._stage1_repo.load_open(ticker)
+        if existing is not None:
+            self.logger.info(
+                "EARN_PRE skipped for %s — Stage 1 position already OPEN (id=%s)",
+                ticker,
+                existing.id,
+            )
+            return None
+
         outcomes = self._stage1_repo.load_historical_outcomes(ticker)
         if outcomes.source == "observed" and outcomes.beat_rate is not None:
             beat_rate = outcomes.beat_rate
@@ -594,11 +607,9 @@ class SignalGeneratorAgent(BaseAgent):
 
         history: list[DebateRound] = []
         for round_n in range(self.settings.signal_debate_rounds):
-            bull_resp = await self._llm.quick.invoke(
-                _build_bull_prompt(signal, history)
-            )
-            bear_resp = await self._llm.quick.invoke(
-                _build_bear_prompt(signal, history)
+            bull_resp, bear_resp = await asyncio.gather(
+                self._llm.quick.invoke(_build_bull_prompt(signal, history)),
+                self._llm.quick.invoke(_build_bear_prompt(signal, history)),
             )
             history.append(
                 DebateRound(

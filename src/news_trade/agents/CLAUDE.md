@@ -9,11 +9,12 @@ compute their stage, write results back, and return the updated state.
 
 | Agent | File | Status |
 |---|---|---|
-| `PortfolioFetcherAgent` | `portfolio_fetcher.py` | **Done — pipeline entry point; fetches live equity, positions, and drawdown from Alpaca each cycle** |
-| `NewsIngestorAgent` | `news_ingestor.py` | Done |
-| `MarketDataAgent` | `market_data.py` | Done |
-| `SentimentAnalystAgent` | `sentiment_analyst.py` | Done |
-| `SignalGeneratorAgent` | `signal_generator.py` | **Done — Pattern A implemented** |
+| `PortfolioFetcherAgent` | `portfolio_fetcher.py` | **Done — 1st parallel branch from START; fetches Alpaca account + positions concurrently via `asyncio.gather`** |
+| `NewsIngestorAgent` | `news_ingestor.py` | **Done — 2nd parallel branch from START** |
+| `EarningsTickerNode` | `earnings_ticker.py` | **Done — 3rd parallel branch from START; DB-only; synthesises ephemeral EARN_PRE events for tickers with earnings in next 1–7 days** |
+| `MarketDataAgent` | `market_data.py` | **Done — runs in parallel with SentimentAnalystAgent from analysis_fan** |
+| `SentimentAnalystAgent` | `sentiment_analyst.py` | **Done — runs in parallel with MarketDataAgent from analysis_fan** |
+| `SignalGeneratorAgent` | `signal_generator.py` | **Done — Pattern A implemented; parallel bull/bear debate via `asyncio.gather`; OPEN guard in `_handle_earn_pre`** |
 | `RiskManagerAgent` | `risk_manager.py` | **Done — five-layer fail-fast checks; risk_dry_run mode** |
 | `ExecutionAgent` | `execution.py` | **Done — Alpaca paper trading integration** |
 | `EarningsCalendarAgent` | `earnings_calendar.py` | **Done — daily cron, outside LangGraph pipeline** |
@@ -48,18 +49,22 @@ lets the runtime watchlist update between cycles without a restart.
 
 | Agent | Reads | Writes |
 |---|---|---|
-| `PortfolioFetcherAgent` | `errors` (preserves existing) | `portfolio`, `errors` |
+| `PortfolioFetcherAgent` | — | `portfolio`, `errors` |
 | `NewsIngestorAgent` | `last_poll` | `news_events`, `errors` |
+| `EarningsTickerNode` | — | `news_events`, `active_tickers`, `errors` |
 | `MarketDataAgent` | `news_events` | `market_context` (dict[ticker → MarketSnapshot]) |
 | `SentimentAnalystAgent` | `news_events`, `estimates` (optional) | `sentiment_results` |
 | `SignalGeneratorAgent` | `sentiment_results`, `market_context`, `news_events` | `trade_signals` |
 | `RiskManagerAgent` | `trade_signals`, `portfolio` | `approved_signals`, `rejected_signals`, `system_halted` |
-| `HaltHandlerAgent` | `system_halted`, `portfolio`, `errors` | `errors` |
-| `ExecutionAgent` | `approved_signals` | `orders` |
+| `HaltHandlerAgent` | `system_halted`, `portfolio` | `errors` |
+| `ExecutionAgent` | `approved_signals` | `orders`, `errors` |
 | `EarningsCalendarAgent` | — (reads watchlist via `WatchlistManager`) | `news_events`, `estimates`, `errors` |
 
-`EarningsCalendarAgent` runs **outside** the main pipeline on a daily cron. It publishes
-synthetic `EARN_PRE` events to Redis; the pipeline picks them up as regular news.
+`news_events` and `errors` use `operator.add` reducers — parallel nodes accumulate
+without overwriting each other. `PortfolioFetcherAgent`, `NewsIngestorAgent`, and
+`EarningsTickerNode` return **only new errors** (not the preserved list).
+
+`EarningsCalendarAgent` runs **outside** the main pipeline on a daily cron.
 
 Full `PipelineState` schema lives in `graph/state.py`.
 
@@ -67,22 +72,39 @@ Full `PipelineState` schema lives in `graph/state.py`.
 
 ## Pipeline Topology
 
+**Parallel execution:** Three agents fan out from `START`. After fan-in at `post_init`,
+`MarketDataAgent` and `SentimentAnalystAgent` run simultaneously from `analysis_fan`.
+LangGraph merges state at each fan-in point; `errors` and `news_events` use
+`operator.add` reducers so parallel nodes accumulate correctly.
+
+**`post_init` / `analysis_fan`:** no-op passthrough nodes (return `{}`). Their only
+purpose is synchronisation (fan-in / fan-out barrier).
+
 ```
-PortfolioFetcherAgent  (always runs — fetches live equity + positions from Alpaca)
-    ↓
-NewsIngestorAgent
-    │ news_events empty? → END
-    ↓
-MarketDataAgent → SentimentAnalystAgent → SignalGeneratorAgent → RiskManagerAgent
-                                                                      │ system_halted? → HaltHandlerAgent → END
-                                                                      │ approved signals? → ExecutionAgent → END
-                                                                      └─ else → END
+START ─┬── PortfolioFetcherAgent   (live Alpaca equity + positions — parallel)
+       ├── NewsIngestorAgent       (news from RSS/Benzinga — parallel)
+       └── EarningsTickerNode     (EARN_PRE events from DB — parallel, always-on)
+                   ↓ fan-in: post_init
+                   │ no work (no news_events AND no active_tickers)? → END
+                   ↓ fan-out: analysis_fan
+       ┌───────────┴──────────────┐
+  MarketDataAgent      SentimentAnalystAgent   (parallel)
+       └───────────┬──────────────┘
+                   ↓ fan-in: SignalGeneratorAgent
+              SignalGeneratorAgent
+                   ↓
+              RiskManagerAgent
+           ┌───────┴──────────┐
+      HaltHandler        ExecutionAgent
+           └───────┬──────────┘
+                   ↓
+                  END
 ```
 
-Routing logic: `graph/pipeline.py` — `_has_news_events()` (after news ingestor) and
-`_route_after_risk()` (3-way router after risk manager: `"halt"` → `HaltHandlerAgent`,
-`"execute"` → `ExecutionAgent`, `"end"` → END). `system_halted` takes priority over
-approved signals.
+Routing logic: `graph/pipeline.py` — `_has_work_to_do()` (after `post_init`: True
+if `news_events` OR `active_tickers` are non-empty) and `_route_after_risk()` (3-way
+router: `"halt"` → `HaltHandlerAgent`, `"execute"` → `ExecutionAgent`, `"end"` → END).
+`system_halted` takes priority over approved signals.
 
 ---
 

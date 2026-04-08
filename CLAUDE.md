@@ -95,32 +95,43 @@ tests/                     # pytest suite — see tests/CLAUDE.md for convention
 ## Pipeline Architecture
 
 ```
-PortfolioFetcherAgent   ← NEW: fetches live equity + positions from Alpaca (always runs)
-    ↓
-NewsIngestorAgent
-    │ (no new news? → END)
-    ↓
-MarketDataAgent
-    ↓
-SentimentAnalystAgent
-    ↓
-SignalGeneratorAgent
-    ↓
-RiskManagerAgent
-    │ (no approved signals? → END)
-    ↓
-ExecutionAgent
-    ↓
-END
+[START]
+  ├── PortfolioFetcherAgent    ← live Alpaca equity + positions (parallel)
+  ├── NewsIngestorAgent        ← news from RSS/Benzinga provider (parallel)
+  └── EarningsTickerNode       ← active earnings tickers from calendar DB (parallel, new)
+            ↓  (fan-in: post_init)
+            │  no work (no news + no active tickers)? → END
+            ↓  (fan-out: analysis_fan)
+  ├── MarketDataAgent          ← OHLCV snapshots for all tickers (parallel)
+  └── SentimentAnalystAgent    ← LLM sentiment per event; concurrent internally (parallel)
+            ↓  (fan-in: SignalGeneratorAgent)
+       SignalGeneratorAgent     ← builds signals; debate rounds run bull/bear in parallel
+            ↓
+       RiskManagerAgent
+            ↓
+  ┌── HaltHandlerAgent → END
+  ├── ExecutionAgent → END
+  └── END
 ```
 
-`PipelineState` (`graph/state.py`) is a `TypedDict` containing: `news_events`,
-`market_context`, `sentiment_results`, `trade_signals`, `approved_signals`,
-`rejected_signals`, `orders`, `portfolio`, `errors`, `system_halted`.
+**No-news cycles:** `EarningsTickerNode` synthesises ephemeral `EARN_PRE` `NewsEvent`
+objects for every active earnings ticker (earnings in the next 1–7 days) on every
+pipeline cycle. These events flow through `SentimentAnalystAgent` and
+`SignalGeneratorAgent` exactly like cron-generated events. A lack of supporting news
+naturally produces a lower `ConfidenceScorer` output, resulting in a smaller or gated
+signal — no separate handling required.
 
-`portfolio` is populated by `PortfolioFetcherAgent` (first node) with live data from
-Alpaca each cycle. All `RiskManagerAgent` checks (drawdown halt, size cap, position
-concentration) operate on real figures.
+`PipelineState` (`graph/state.py`) is a `TypedDict` containing: `news_events`
+(Annotated with `operator.add` reducer), `active_tickers`, `market_context`,
+`sentiment_results`, `trade_signals`, `approved_signals`, `rejected_signals`,
+`orders`, `portfolio`, `errors` (Annotated with `operator.add` reducer), `system_halted`.
+
+`news_events` and `errors` use `operator.add` reducers so parallel nodes accumulate
+without overwriting each other. `portfolio` is populated by `PortfolioFetcherAgent`
+at the start of each cycle. All `RiskManagerAgent` checks operate on real figures.
+
+`post_init` and `analysis_fan` are no-op passthrough nodes whose only purpose is
+fan-in / fan-out synchronisation.
 
 ---
 
@@ -278,6 +289,9 @@ unless absolutely necessary with a comment explaining why.
 | **FMPEstimatesProvider + EstimatesProvider Protocol** | **Done — fetches historical EPS beat rates from FMP earnings-surprises endpoint; three-tier fallback in `_handle_earn_pre()`: observed → FMP → static default; injected into EarningsCalendarAgent** |
 | **`HaltHandlerAgent` — drawdown emergency cleanup node** | **Done — cancels all Alpaca orders, closes all positions, expires OPEN Stage1 positions; wired as `halt_handler` node after `RiskManagerAgent` via `_route_after_risk()` 3-way router** |
 | **Dynamic Watchlist Selection** | **Done — `WatchlistManager` service + `select-watchlist` CLI; `WatchlistSelectionRow` ORM table; `is_candidate` computed field on `EarningsCalendarEntry`; injected into `NewsIngestorAgent`, `SentimentAnalystAgent`, `EarningsCalendarAgent`** |
+| **Pipeline parallelisation — Level 1 (graph topology)** | **Done — three-way fan-out from START (PortfolioFetcher ‖ NewsIngestor ‖ EarningsTickerNode); two-way fan-out from analysis_fan (MarketData ‖ SentimentAnalyst); `post_init` + `analysis_fan` passthrough nodes for synchronisation; `errors` + `news_events` use `operator.add` reducers** |
+| **Pipeline parallelisation — Level 2 (within-agent)** | **Done — `ClaudeSentimentProvider.analyse_batch` uses `asyncio.gather`; `SignalGeneratorAgent._debate_signal` runs bull/bear in parallel; `PortfolioFetcherAgent` fetches account + positions in parallel** |
+| **`EarningsTickerNode` — always-on active ticker analysis** | **Done — DB-only pipeline node (3rd parallel branch); queries `NewsEventRow` for cron-written EARN_PRE events; synthesises ephemeral events for tickers with earnings in next 1–7 days; closes structural gap between `EarningsCalendarAgent` cron and main pipeline** |
 | **Alembic schema migrations** | **Done — `create_tables()` runs `alembic upgrade head` programmatically on every startup; `alembic/versions/6dae9e7efe75_initial_schema.py` captures all 6 tables; `DEPLOY.md` documents the `alembic stamp head` first-deploy procedure** |
 | **Version logging** | **Done — `main.py` logs `version`, short git commit hash, Python version, and `DATABASE_URL` at startup** |
 | **Session reporting (`SessionReporter`)** | **Done — writes `data/sessions/session_YYYYMMDD_HHMMSS.json` on exit; `--resume-session` / `--session-file` CLI flags load a previous session at startup and log a summary with system-halt and error warnings** |

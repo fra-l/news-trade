@@ -273,11 +273,14 @@ class TestRunIntegration:
         result = await self.agent.run({"approved_signals": []})
         assert result["orders"] == []
 
-    async def test_existing_errors_preserved(self) -> None:
+    async def test_no_errors_returns_empty_errors_list(self) -> None:
+        # With operator.add reducers, agents return only NEW errors (not preserved
+        # prior errors). The reducer accumulates errors across parallel nodes.
         result = await self.agent.run(
             {"approved_signals": [], "errors": ["prior-error"]}
         )
-        assert "prior-error" in result["errors"]
+        # Prior errors are NOT in the return — the reducer handles accumulation
+        assert result["errors"] == []
 
 
 # ---------------------------------------------------------------------------

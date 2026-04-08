@@ -76,7 +76,7 @@ class HaltHandlerAgent(BaseAgent):
             drawdown,
         )
 
-        errors: list[str] = list(state.get("errors", []))
+        errors: list[str] = []
 
         errors.extend(await self._cancel_all_orders())
         errors.extend(await self._close_all_positions())

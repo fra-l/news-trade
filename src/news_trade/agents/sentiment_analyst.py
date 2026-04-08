@@ -61,8 +61,7 @@ class SentimentAnalystAgent(BaseAgent):
             )
         except Exception as exc:
             self.logger.error("Sentiment analysis failed: %s", exc)
-            existing = state.get("errors") or []
-            return {"sentiment_results": [], "errors": [*existing, str(exc)]}
+            return {"sentiment_results": [], "errors": [str(exc)]}
 
         for r in results:
             self.logger.info(
