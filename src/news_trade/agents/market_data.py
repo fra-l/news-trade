@@ -47,8 +47,7 @@ class MarketDataAgent(BaseAgent):
             snapshots = await self._provider.get_snapshots(tickers)
         except Exception as exc:
             self.logger.error("Market data fetch failed: %s", exc)
-            existing = state.get("errors") or []
-            return {"market_context": {}, "errors": [*existing, str(exc)]}
+            return {"market_context": {}, "errors": [str(exc)]}
 
         for ticker, snap in snapshots.items():
             self.logger.info(

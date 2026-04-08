@@ -98,8 +98,7 @@ class NewsIngestorAgent(BaseAgent):
             )
         except Exception as exc:
             self.logger.error("News fetch failed: %s", exc)
-            existing = state.get("errors") or []
-            return {"news_events": [], "errors": [*existing, str(exc)]}
+            return {"news_events": [], "errors": [str(exc)]}
 
         self.logger.debug(
             "NewsIngestor: fetched %d candidate events from %s",

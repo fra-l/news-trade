@@ -6,7 +6,8 @@ Each agent node reads from and writes to specific keys.
 
 from __future__ import annotations
 
-from typing import TypedDict
+import operator
+from typing import Annotated, TypedDict
 
 from news_trade.models import (
     MarketSnapshot,
@@ -23,10 +24,15 @@ class PipelineState(TypedDict, total=False):
     """Shared state flowing through the LangGraph orchestration graph.
 
     Keys are populated progressively as each agent node executes.
+    ``news_events`` and ``errors`` use ``operator.add`` reducers so parallel
+    nodes can write to them concurrently without overwriting each other.
     """
 
-    # Input
-    news_events: list[NewsEvent]
+    # Input — merged from NewsIngestorAgent + EarningsTickerNode via operator.add
+    news_events: Annotated[list[NewsEvent], operator.add]
+
+    # Active earnings tickers (next 1-7 days) produced by EarningsTickerNode
+    active_tickers: list[str]
 
     # After EarningsCalendarAgent — ticker → pre-announcement consensus estimates
     estimates: dict[str, EstimatesData]
@@ -50,7 +56,7 @@ class PipelineState(TypedDict, total=False):
     # Available throughout
     portfolio: PortfolioState
 
-    # Control flow
-    errors: list[str]
+    # Control flow — operator.add reducer accumulates errors from parallel nodes
+    errors: Annotated[list[str], operator.add]
     system_halted: bool  # set True by RiskManagerAgent when drawdown limit is breached
     replay_mode: bool  # set True by --replay-ticker; NewsIngestorAgent skips live fetch

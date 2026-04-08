@@ -39,7 +39,7 @@ from news_trade.graph.pipeline import (
     RISK,
     SENTIMENT,
     SIGNAL,
-    _has_news_events,
+    _has_work_to_do,
     _route_after_risk,
     build_pipeline,
 )
@@ -233,7 +233,7 @@ def _build_replay_pipeline() -> StateGraph:
     g.set_entry_point(_STUDIO_SEED)
     g.add_edge(_STUDIO_SEED, PORTFOLIO)
     g.add_edge(PORTFOLIO, NEWS)
-    g.add_conditional_edges(NEWS, _has_news_events, {True: MARKET, False: END})
+    g.add_conditional_edges(NEWS, _has_work_to_do, {True: MARKET, False: END})
     g.add_edge(MARKET, SENTIMENT)
     g.add_edge(SENTIMENT, SIGNAL)
     g.add_edge(SIGNAL, RISK)

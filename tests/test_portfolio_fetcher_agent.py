@@ -150,8 +150,12 @@ async def test_alpaca_unavailable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_alpaca_unavailable_preserves_existing_errors() -> None:
-    """Errors from earlier agents are not discarded on fetch failure."""
+async def test_alpaca_unavailable_returns_new_error_only() -> None:
+    """On Alpaca failure, only the new PortfolioFetcher error is returned.
+
+    With operator.add reducers, agents return only NEW errors.
+    The reducer accumulates errors across parallel nodes automatically.
+    """
     alpaca = MagicMock()
     alpaca.get_account.side_effect = ConnectionError("broker offline")
 
@@ -159,7 +163,7 @@ async def test_alpaca_unavailable_preserves_existing_errors() -> None:
     result = await agent.run({"errors": ["prior error"]})
 
     errors = result["errors"]
-    assert any(e == "prior error" for e in errors)
+    assert not any(e == "prior error" for e in errors)  # prior not preserved
     assert any("broker offline" in e for e in errors)
 
 

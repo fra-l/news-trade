@@ -57,11 +57,11 @@ class PortfolioFetcherAgent(BaseAgent):
             )
             return {"portfolio": PortfolioState(equity=0.0, cash=0.0)}
 
-        existing_errors: list[str] = list(state.get("errors") or [])
-
         try:
-            account = await asyncio.to_thread(self._alpaca.get_account)
-            alpaca_positions = await asyncio.to_thread(self._alpaca.get_all_positions)
+            account, alpaca_positions = await asyncio.gather(
+                asyncio.to_thread(self._alpaca.get_account),
+                asyncio.to_thread(self._alpaca.get_all_positions),
+            )
         except Exception as exc:
             self.logger.warning(
                 "PortfolioFetcher: failed to fetch account data from Alpaca: %s — "
@@ -70,7 +70,7 @@ class PortfolioFetcherAgent(BaseAgent):
             )
             return {
                 "portfolio": PortfolioState(equity=0.0, cash=0.0),
-                "errors": [*existing_errors, f"PortfolioFetcher: {exc}"],
+                "errors": [f"PortfolioFetcher: {exc}"],
             }
 
         equity = float(getattr(account, "equity", 0) or 0)

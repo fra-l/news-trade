@@ -12,7 +12,7 @@ from news_trade.config import (
 )
 from news_trade.graph.pipeline import (
     _has_approved_signals,
-    _has_news_events,
+    _has_work_to_do,
     _route_after_risk,
     build_pipeline,
 )
@@ -21,6 +21,9 @@ from news_trade.services.event_bus import EventBus
 EXPECTED_NODES = {
     "portfolio_fetcher",
     "news_ingestor",
+    "earnings_ticker",   # new: 3rd parallel branch
+    "post_init",         # new: fan-in synchronisation node
+    "analysis_fan",      # new: fan-out synchronisation node
     "market_data",
     "sentiment_analyst",
     "signal_generator",
@@ -65,25 +68,31 @@ class TestBuildPipeline:
         user_nodes = {n for n in compiled_graph.nodes if not n.startswith("__")}
         assert user_nodes == EXPECTED_NODES
 
-    def test_graph_has_conditional_edge_after_news_ingestor(self, compiled_graph):
-        # builder.branches holds the conditional-edge specs keyed by source node
-        assert "news_ingestor" in compiled_graph.builder.branches
+    def test_graph_has_conditional_edge_after_post_init(self, compiled_graph):
+        # The gate (_has_work_to_do) is now on post_init, not news_ingestor
+        assert "post_init" in compiled_graph.builder.branches
 
     def test_graph_has_conditional_edge_after_risk_manager(self, compiled_graph):
         assert "risk_manager" in compiled_graph.builder.branches
 
 
-class TestHasNewsEvents:
-    def test_returns_true_when_events_present(self):
-        state = {"news_events": [object()]}
-        assert _has_news_events(state) is True
+class TestHasWorkToDo:
+    def test_returns_true_when_news_events_present(self):
+        assert _has_work_to_do({"news_events": [object()]}) is True
 
-    def test_returns_false_when_empty_list(self):
-        state = {"news_events": []}
-        assert _has_news_events(state) is False
+    def test_returns_true_when_active_tickers_present(self):
+        # Key scenario: no news but active earnings tickers → pipeline continues
+        assert _has_work_to_do({"active_tickers": ["AAPL"]}) is True
 
-    def test_returns_false_when_key_absent(self):
-        assert _has_news_events({}) is False
+    def test_returns_true_when_both_present(self):
+        state = {"news_events": [object()], "active_tickers": ["AAPL"]}
+        assert _has_work_to_do(state) is True
+
+    def test_returns_false_when_both_empty(self):
+        assert _has_work_to_do({"news_events": [], "active_tickers": []}) is False
+
+    def test_returns_false_when_keys_absent(self):
+        assert _has_work_to_do({}) is False
 
 
 class TestHasApprovedSignals:

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -484,3 +485,118 @@ class TestEstimatesInjectionPhase2:
         call_args, _ = mock_deep.invoke.call_args
         user_message = call_args[0]
         assert "EARNINGS ESTIMATES" not in user_message
+
+
+# ---------------------------------------------------------------------------
+# ClaudeSentimentProvider — concurrent analyse_batch
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentAnalyseBatch:
+    """Verify that analyse_batch dispatches LLM calls concurrently."""
+
+    def _make_neutral_response(self, ticker: str = "AAPL") -> str:
+        return (
+            f'[{{"ticker":"{ticker}","label":"NEUTRAL","score":0.0,'
+            f'"confidence":0.5,"reasoning":"test"}}]'
+        )
+
+    async def test_all_events_run_concurrently(self) -> None:
+        """asyncio.gather dispatches all _call_claude coroutines before any return."""
+        provider, _, _ = _make_provider(daily_budget=100.0)
+
+        events = [_make_event(f"e{i}", ticker=f"T{i}") for i in range(3)]
+        call_order: list[str] = []
+
+        async def fake_call(event, estimates):
+            call_order.append(f"start:{event.event_id}")
+            await asyncio.sleep(0)  # yield so others can start
+            call_order.append(f"end:{event.event_id}")
+            from news_trade.models.sentiment import SentimentLabel, SentimentResult
+            return [SentimentResult(
+                event_id=event.event_id,
+                ticker=event.tickers[0],
+                label=SentimentLabel.NEUTRAL,
+                score=0.0,
+                confidence=0.5,
+                reasoning="test",
+                model_id="mock",
+                provider="mock",
+            )]
+
+        with patch.object(provider, "_call_claude", side_effect=fake_call):
+            results = await provider.analyse_batch(events)
+
+        assert len(results) == 3
+        starts = [x for x in call_order if x.startswith("start:")]
+        ends = [x for x in call_order if x.startswith("end:")]
+        assert len(starts) == 3
+        assert len(ends) == 3
+        # Concurrent: all starts appear before the first end (after each yields)
+        assert call_order.index("start:e2") < call_order.index("end:e0")
+
+    async def test_budget_exhausted_before_batch_returns_neutral(self) -> None:
+        """Events queued when budget already exhausted get neutral results."""
+        provider, _, _ = _make_provider(daily_budget=0.00)
+        # Force budget to be exhausted
+        provider._spent_today = 1.00
+        events = [_make_event("ex", ticker="AAPL")]
+
+        results = await provider.analyse_batch(events)
+
+        assert len(results) == 1
+        from news_trade.models.sentiment import SentimentLabel
+        assert results[0].label == SentimentLabel.NEUTRAL
+
+    async def test_failed_call_returns_neutral_not_raises(self) -> None:
+        """A RuntimeError from _call_claude produces a neutral result."""
+        provider, _, _ = _make_provider(daily_budget=100.0)
+        events = [_make_event("bad", ticker="AAPL")]
+
+        async def boom(event, estimates):
+            raise RuntimeError("LLM unavailable")
+
+        with patch.object(provider, "_call_claude", side_effect=boom):
+            results = await provider.analyse_batch(events)
+
+        assert len(results) == 1
+        from news_trade.models.sentiment import SentimentLabel
+        assert results[0].label == SentimentLabel.NEUTRAL
+
+    async def test_partial_failure_does_not_affect_other_results(self) -> None:
+        """One failing call returns neutral; other calls' results are still returned."""
+        from news_trade.models.sentiment import SentimentLabel, SentimentResult
+
+        provider, _, _ = _make_provider(daily_budget=100.0)
+        events = [_make_event("ok", ticker="AAPL"), _make_event("bad", ticker="MSFT")]
+        call_count = 0
+
+        async def mixed_call(event, estimates):
+            nonlocal call_count
+            call_count += 1
+            if event.event_id == "bad":
+                raise RuntimeError("fail")
+            return [SentimentResult(
+                event_id=event.event_id,
+                ticker=event.tickers[0],
+                label=SentimentLabel.BULLISH,
+                score=0.7,
+                confidence=0.8,
+                reasoning="test",
+                model_id="mock",
+                provider="mock",
+            )]
+
+        with patch.object(provider, "_call_claude", side_effect=mixed_call):
+            results = await provider.analyse_batch(events)
+
+        assert call_count == 2
+        assert len(results) == 2
+        labels = {r.ticker: r.label for r in results}
+        assert labels["AAPL"] == SentimentLabel.BULLISH
+        assert labels["MSFT"] == SentimentLabel.NEUTRAL
+
+    async def test_empty_event_list_returns_empty(self) -> None:
+        provider, _, _ = _make_provider()
+        results = await provider.analyse_batch([])
+        assert results == []

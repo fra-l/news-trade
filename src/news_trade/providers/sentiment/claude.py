@@ -7,6 +7,7 @@ the budget is exhausted (returns NEUTRAL with score=0 and confidence=0).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, date, datetime
@@ -130,7 +131,17 @@ class ClaudeSentimentProvider:
         events: list[NewsEvent],
         estimates: dict[str, EstimatesData] | None = None,
     ) -> list[SentimentResult]:
-        """Score multiple events, respecting the daily budget cap.
+        """Score multiple events concurrently, respecting the daily budget cap.
+
+        Pre-partitions budget-exhausted events (those skipped before any call is
+        launched) into neutral results, then dispatches the remaining events
+        concurrently via ``asyncio.gather``.  Individual call failures produce
+        neutral results rather than propagating exceptions.
+
+        The daily budget is a *soft* cap: all events that pass the pre-partition
+        check are dispatched simultaneously so a single batch may overshoot the
+        cap by up to N-1 call costs.  A WARNING is logged post-gather when this
+        occurs.
 
         Args:
             events: News events to score.
@@ -139,7 +150,10 @@ class ClaudeSentimentProvider:
                        prompt for richer pre-announcement context.
         """
         self._reset_budget_if_new_day()
-        all_results: list[SentimentResult] = []
+
+        # Pre-partition: budget already exhausted before this batch starts
+        to_analyse: list[NewsEvent] = []
+        neutral_results: list[SentimentResult] = []
         for event in events:
             if self._budget_exhausted():
                 _logger.warning(
@@ -147,13 +161,44 @@ class ClaudeSentimentProvider:
                     self._daily_budget,
                     event.event_id,
                 )
-                all_results.append(
+                neutral_results.append(
                     _neutral_result(event, self._llm.model_id, self._llm.provider)
                 )
-                continue
-            results = await self._call_claude(event, estimates)
-            all_results.extend(results)
-        return all_results
+            else:
+                to_analyse.append(event)
+
+        if not to_analyse:
+            return neutral_results
+
+        # Dispatch all remaining events concurrently
+        gathered = await asyncio.gather(
+            *[self._call_claude(event, estimates) for event in to_analyse],
+            return_exceptions=True,
+        )
+
+        llm_results: list[SentimentResult] = []
+        for event, outcome in zip(to_analyse, gathered, strict=True):
+            if isinstance(outcome, BaseException):
+                _logger.error(
+                    "Concurrent sentiment call failed for %s: %s",
+                    event.event_id,
+                    outcome,
+                )
+                llm_results.append(
+                    _neutral_result(event, self._llm.model_id, self._llm.provider)
+                )
+            else:
+                llm_results.extend(outcome)
+
+        # Warn if the batch overshot the daily budget (soft cap)
+        if self._spent_today > self._daily_budget:
+            _logger.warning(
+                "Daily Claude budget $%.2f exceeded after batch — spent=%.4f",
+                self._daily_budget,
+                self._spent_today,
+            )
+
+        return neutral_results + llm_results
 
     async def _call_claude(
         self,
