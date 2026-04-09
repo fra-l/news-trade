@@ -55,6 +55,7 @@ All provider methods are `async`. Test mocks implement only the methods the test
 | Market | `market/yfinance.py` | `YFinanceMarketProvider` | Free | — |
 | Market | `market/polygon_free.py` | `PolygonFreeMarketProvider` | Free tier | `POLYGON_API_KEY` |
 | Market | `market/polygon_paid.py` | `PolygonPaidMarketProvider` | Starter+ | `POLYGON_API_KEY` |
+| Market | `market/finnhub.py` | `FinnhubMarketDataProvider` | Free | `FINNHUB_API_KEY` |
 | Sentiment | `sentiment/claude.py` | `ClaudeSentimentProvider` | Paid | `ANTHROPIC_API_KEY` |
 | Sentiment | `sentiment/keyword.py` | `KeywordSentimentProvider` | Free | — |
 | Calendar | `calendar/finnhub.py` | `FinnhubCalendarProvider` | Free | `FINNHUB_API_KEY` |

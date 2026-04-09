@@ -155,7 +155,7 @@ to `.env` before running.
 | `SMALL_CAP_MAX_MARKET_CAP_USD` | `2000000000` | Market-cap ceiling (USD) for small-cap filter at startup |
 | `MAX_STARTUP_TICKERS` | `5` | Max tickers selected at startup (-1 = unlimited) |
 | `NEWS_PROVIDER` | `rss` | `rss` or `benzinga` |
-| `MARKET_DATA_PROVIDER` | `yfinance` | `yfinance`, `polygon_free`, `polygon_paid` |
+| `MARKET_DATA_PROVIDER` | `yfinance` | `yfinance`, `polygon_free`, `polygon_paid`, `finnhub` |
 | `SENTIMENT_PROVIDER` | `claude` | `claude` or `keyword` |
 | `LLM_PROVIDER` | `anthropic` | LLM backend: `anthropic` or `ollama` |
 | `LLM_QUICK_MODEL` | `claude-haiku-4-5-20251001` | Quick model (e.g. `llama3.2:3b` for Ollama) |
@@ -163,6 +163,7 @@ to `.env` before running.
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama OpenAI-compatible endpoint (`ollama` provider only) |
 | `CLAUDE_DAILY_BUDGET_USD` | `2.00` | Hard cap on Claude API spend per day (Anthropic only) |
 | `SENTIMENT_DRY_RUN` | `false` | Skip real Claude calls; return neutral |
+| `SENTIMENT_MAX_CONCURRENT` | `5` | Max parallel LLM calls per batch; lower for local Ollama (e.g. `2`) |
 | `NEWS_KEYWORD_PREFILTER` | `true` | Pre-filter news by keyword before sentiment |
 | `EARN_BEAT_PCT_THRESHOLD` | `2.0` | EPS % surprise above which event is EARN_BEAT |
 | `EARN_MISS_PCT_THRESHOLD` | `-2.0` | EPS % surprise below which event is EARN_MISS |

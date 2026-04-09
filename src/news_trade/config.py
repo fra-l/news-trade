@@ -21,6 +21,7 @@ class MarketDataProviderType(StrEnum):
     POLYGON_FREE = "polygon_free"
     POLYGON_PAID = "polygon_paid"
     ALPACA = "alpaca"
+    FINNHUB = "finnhub"
 
 
 class SentimentProviderType(StrEnum):
@@ -180,6 +181,13 @@ class Settings(BaseSettings):
     sentiment_dry_run: bool = Field(
         default=False,
         description="Skip real sentiment API calls; use mock neutral scores",
+    )
+    sentiment_max_concurrent: int = Field(
+        default=5,
+        description=(
+            "Maximum parallel LLM calls in analyse_batch (semaphore limit). "
+            "Reduce when using a local Ollama instance to avoid 429 errors."
+        ),
     )
     news_keyword_prefilter: bool = Field(
         default=True,

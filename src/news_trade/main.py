@@ -41,11 +41,30 @@ from news_trade.services.stage1_repository import Stage1Repository
 from news_trade.services.tables import NewsEventRow
 from news_trade.services.telegram_bot import TelegramBotService
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(name)-24s  %(levelname)-8s  %(message)s",
-)
 logger = logging.getLogger("news_trade")
+
+
+def _configure_logging(log_file: str) -> None:
+    """Wire console + file handlers onto the root logger.
+
+    Both handlers share the same format.  The file is opened in write mode so
+    each run produces a fresh log (no unbounded growth).
+    """
+    fmt = "%(asctime)s  %(name)-24s  %(levelname)-8s  %(message)s"
+    formatter = logging.Formatter(fmt)
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    console = logging.StreamHandler()
+    console.setFormatter(formatter)
+    root.addHandler(console)
+
+    fh = logging.FileHandler(log_file, mode="w", encoding="utf-8")
+    fh.setFormatter(formatter)
+    root.addHandler(fh)
+
+    logger.info("Logging to %s", Path(log_file).resolve())
 
 # Cron misfire tolerance: if the scheduler wakes up late (e.g. process was
 # suspended), still run the job as long as it missed by less than this many seconds.
@@ -440,7 +459,15 @@ def entrypoint() -> None:
             "uses the latest file."
         ),
     )
+    parser.add_argument(
+        "--log-file",
+        metavar="FILE",
+        default="trade.log",
+        help="Log file path (default: trade.log). Overwritten on every run.",
+    )
     args = parser.parse_args()
+
+    _configure_logging(args.log_file)
 
     session_file: Path | None = None
     if args.session_file:

@@ -83,11 +83,13 @@ class ClaudeSentimentProvider:
         self,
         llm: LLMClientFactory,
         daily_budget: float = 2.00,
+        max_concurrent: int = 5,
     ) -> None:
         self._factory = llm
         # keep self._llm pointing to deep for budget tracking (conservative rates)
         self._llm = llm.deep
         self._daily_budget = daily_budget
+        self._semaphore = asyncio.Semaphore(max_concurrent)
         self._budget_date: date | None = None
         self._spent_today: float = 0.0
 
@@ -170,9 +172,13 @@ class ClaudeSentimentProvider:
         if not to_analyse:
             return neutral_results
 
-        # Dispatch all remaining events concurrently
+        # Dispatch events concurrently, bounded by the semaphore
+        async def _throttled(event: NewsEvent) -> list[SentimentResult]:
+            async with self._semaphore:
+                return await self._call_claude(event, estimates)
+
         gathered = await asyncio.gather(
-            *[self._call_claude(event, estimates) for event in to_analyse],
+            *[_throttled(event) for event in to_analyse],
             return_exceptions=True,
         )
 

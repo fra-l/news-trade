@@ -58,6 +58,9 @@ def get_market_data_provider(settings: Settings | None = None) -> MarketDataProv
                 PolygonPaidMarketProvider,
             )
             return PolygonPaidMarketProvider(api_key=cfg.polygon_api_key)
+        case MarketDataProviderType.FINNHUB:
+            from news_trade.providers.market.finnhub import FinnhubMarketDataProvider
+            return FinnhubMarketDataProvider(api_key=cfg.finnhub_api_key)
         case _:
             from news_trade.providers.market.yfinance import YFinanceMarketProvider
             return YFinanceMarketProvider()
@@ -73,6 +76,7 @@ def get_sentiment_provider(settings: Settings | None = None) -> SentimentProvide
             return ClaudeSentimentProvider(
                 llm=LLMClientFactory(cfg),
                 daily_budget=cfg.claude_daily_budget_usd,
+                max_concurrent=cfg.sentiment_max_concurrent,
             )
         case SentimentProviderType.KEYWORD:
             from news_trade.providers.sentiment.keyword import KeywordSentimentProvider

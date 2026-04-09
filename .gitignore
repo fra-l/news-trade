@@ -11,3 +11,4 @@ data/
 .ruff_cache/
 .pytest_cache/
 .langgraph_api/
+trade.log
