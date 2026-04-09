@@ -29,7 +29,7 @@ def get_news_provider(settings: Settings | None = None) -> NewsProvider:
     match cfg.news_provider:
         case NewsProviderType.RSS:
             from news_trade.providers.news.rss import RSSNewsProvider
-            return RSSNewsProvider(watchlist=[])
+            return RSSNewsProvider()
         case NewsProviderType.BENZINGA:
             from news_trade.providers.news.benzinga import BenzingaNewsProvider
             return BenzingaNewsProvider(api_key=cfg.benzinga_api_key)
@@ -38,7 +38,7 @@ def get_news_provider(settings: Settings | None = None) -> NewsProvider:
             return FinnhubNewsProvider(api_key=cfg.finnhub_api_key)
         case _:
             from news_trade.providers.news.rss import RSSNewsProvider
-            return RSSNewsProvider(watchlist=[])
+            return RSSNewsProvider()
 
 
 def get_market_data_provider(settings: Settings | None = None) -> MarketDataProvider:

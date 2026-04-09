@@ -29,7 +29,7 @@ class FMPBroadScanError(Exception):
     """Raised when a broad (no-ticker) FMP scan returns HTTP 403.
 
     Indicates the API key is on the free tier, which requires explicit ticker
-    symbols.  Callers should retry with ``tickers=settings.watchlist``.
+    symbols.  Callers should retry with an explicit tickers list.
     """
 
 
@@ -71,17 +71,16 @@ class FMPCalendarProvider:
             f"?from={from_date}&to={to_date}&apikey={self._api_key}"
         )
         # Empty tickers = broad scan (return all companies in the date window).
-        watchlist = {t.upper() for t in tickers} if tickers else None
+        ticker_filter = {t.upper() for t in tickers} if tickers else None
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(url)
-                if resp.status_code == 403 and watchlist is None:
+                if resp.status_code == 403 and ticker_filter is None:
                     raise FMPBroadScanError(
                         "FMP broad calendar scan returned 403 — "
                         "free-tier keys require explicit ticker symbols. "
-                        "Upgrade to FMP paid plan for broad market scans, "
-                        "or add tickers to WATCHLIST in .env."
+                        "Upgrade to FMP paid plan for broad market scans."
                     )
                 if resp.status_code != 200:
                     logger.warning(
@@ -97,7 +96,7 @@ class FMPCalendarProvider:
         entries: list[EarningsCalendarEntry] = []
         for item in data:
             symbol = (item.get("symbol") or "").upper()
-            if watchlist is not None and symbol not in watchlist:
+            if ticker_filter is not None and symbol not in ticker_filter:
                 continue
             entry = self._parse_item(item, symbol)
             if entry is not None:

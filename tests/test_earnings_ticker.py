@@ -61,7 +61,7 @@ def _make_news_event_row(
 
 
 def _make_agent(
-    watchlist: list[str] | None = None,
+    tickers: list[str] | None = None,
     engine=None,
 ) -> EarningsTickerNode:
     """Build an EarningsTickerNode with an in-memory SQLite DB."""
@@ -76,7 +76,7 @@ def _make_agent(
         agent = EarningsTickerNode(
             settings=settings,
             event_bus=event_bus,
-            tickers=watchlist or ["AAPL", "NVDA"],
+            tickers=tickers or ["AAPL", "NVDA"],
             stage1_repo=stage1_repo,
         )
     return agent
@@ -91,7 +91,7 @@ class TestEarningsTickerNodeRun:
     async def test_synthesises_earn_pre_events_for_active_tickers(self):
         engine = _make_engine()
         _make_news_event_row("NVDA", days_until=3, engine=engine)
-        agent = _make_agent(watchlist=["NVDA"], engine=engine)
+        agent = _make_agent(tickers=["NVDA"], engine=engine)
 
         result = await agent.run({})
 
@@ -106,7 +106,7 @@ class TestEarningsTickerNodeRun:
     async def test_skips_tickers_beyond_7_day_horizon(self):
         engine = _make_engine()
         _make_news_event_row("AAPL", days_until=10, engine=engine)
-        agent = _make_agent(watchlist=["AAPL"], engine=engine)
+        agent = _make_agent(tickers=["AAPL"], engine=engine)
 
         result = await agent.run({})
 
@@ -116,18 +116,18 @@ class TestEarningsTickerNodeRun:
     async def test_skips_tickers_with_report_in_the_past(self):
         engine = _make_engine()
         _make_news_event_row("AAPL", days_until=-1, engine=engine)
-        agent = _make_agent(watchlist=["AAPL"], engine=engine)
+        agent = _make_agent(tickers=["AAPL"], engine=engine)
 
         result = await agent.run({})
 
         assert result["news_events"] == []
         assert result["active_tickers"] == []
 
-    async def test_skips_tickers_not_on_watchlist(self):
+    async def test_skips_tickers_not_in_session(self):
         engine = _make_engine()
         _make_news_event_row("TSLA", days_until=2, engine=engine)
-        # watchlist only contains AAPL and NVDA
-        agent = _make_agent(watchlist=["AAPL", "NVDA"], engine=engine)
+        # session tickers only contain AAPL and NVDA
+        agent = _make_agent(tickers=["AAPL", "NVDA"], engine=engine)
 
         result = await agent.run({})
 
@@ -138,7 +138,7 @@ class TestEarningsTickerNodeRun:
         """Report exactly 1 day away is within horizon."""
         engine = _make_engine()
         _make_news_event_row("NVDA", days_until=1, engine=engine)
-        agent = _make_agent(watchlist=["NVDA"], engine=engine)
+        agent = _make_agent(tickers=["NVDA"], engine=engine)
 
         result = await agent.run({})
 
@@ -148,7 +148,7 @@ class TestEarningsTickerNodeRun:
         """Report exactly 7 days away is within horizon."""
         engine = _make_engine()
         _make_news_event_row("NVDA", days_until=7, engine=engine)
-        agent = _make_agent(watchlist=["NVDA"], engine=engine)
+        agent = _make_agent(tickers=["NVDA"], engine=engine)
 
         result = await agent.run({})
 
@@ -158,7 +158,7 @@ class TestEarningsTickerNodeRun:
         engine = _make_engine()
         _make_news_event_row("AAPL", days_until=2, engine=engine)
         _make_news_event_row("NVDA", days_until=5, engine=engine)
-        agent = _make_agent(watchlist=["AAPL", "NVDA"], engine=engine)
+        agent = _make_agent(tickers=["AAPL", "NVDA"], engine=engine)
 
         result = await agent.run({})
 
@@ -187,7 +187,7 @@ class TestEarningsTickerNodeRun:
                 session.add(row)
                 session.commit()
 
-        agent = _make_agent(watchlist=["NVDA"], engine=engine)
+        agent = _make_agent(tickers=["NVDA"], engine=engine)
         result = await agent.run({})
         # These rows don't match the canonical prefix format (they end in _dupe0/1)
         # so they'll be skipped (date parse fails). This is expected behaviour.
@@ -222,7 +222,7 @@ class TestEarningsTickerNodeRun:
         """Synthesised events use 'ticker_earn_pre_*' not 'calendar_earn_pre_*'."""
         engine = _make_engine()
         _make_news_event_row("AAPL", days_until=4, engine=engine)
-        agent = _make_agent(watchlist=["AAPL"], engine=engine)
+        agent = _make_agent(tickers=["AAPL"], engine=engine)
 
         result = await agent.run({})
 

@@ -55,7 +55,7 @@ class EarningsTickerNode(BaseAgent):
         1. Query ``news_events`` for rows with ``event_id LIKE 'calendar_earn_pre_%'``.
         2. Parse ``report_date`` from the event_id suffix (``rsplit("_", 1)[-1]``).
         3. Filter to tickers with ``1 <= days_until_report <= _HORIZON_DAYS``.
-        4. Cross-reference with the active watchlist; skip tickers not on it.
+        4. Cross-reference with the session tickers; skip tickers not on it.
         5. Synthesise one ephemeral NewsEvent(event_type=EARN_PRE) per ticker.
         6. Return ``{"news_events": [...], "active_tickers": [...]}``.
     """
@@ -109,7 +109,7 @@ class EarningsTickerNode(BaseAgent):
             nothing to do.
         """
         today = date.today()
-        watchlist = set(self._tickers)
+        active_tickers = set(self._tickers)
         events: list[NewsEvent] = []
         tickers: list[str] = []
 
@@ -145,7 +145,7 @@ class EarningsTickerNode(BaseAgent):
             if not ticker:
                 continue
 
-            if ticker not in watchlist:
+            if ticker not in active_tickers:
                 continue
 
             # Keep the most recent row per ticker (in case the cron ran multiple times)

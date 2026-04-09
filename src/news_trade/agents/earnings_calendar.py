@@ -1,7 +1,7 @@
 """EarningsCalendarAgent - scans the earnings calendar and emits EARN_PRE events.
 
 This agent runs outside the main LangGraph pipeline on a daily cron (07:00 ET Mon-Fri).
-It synthesises NewsEvent(event_type=EARN_PRE) objects for every watchlist ticker that is
+It synthesises NewsEvent(event_type=EARN_PRE) objects for every session ticker that is
 2-5 days from its report date, deduplicates via SQLite, publishes to Redis, and returns
 the synthesised events so callers can inspect or chain them.
 """
@@ -63,10 +63,8 @@ class EarningsCalendarAgent(BaseAgent):
         """
         today = date.today()
         to_date = today + timedelta(days=_SCAN_DAYS_AHEAD)
-        watchlist: list[str] = self._tickers
-
         # --- Fetch from primary, fall back if empty ---
-        entries = await self._fetch_with_fallback(watchlist, today, to_date)
+        entries = await self._fetch_with_fallback(self._tickers, today, to_date)
 
         actionable = [e for e in entries if e.is_actionable]
         self.logger.debug(

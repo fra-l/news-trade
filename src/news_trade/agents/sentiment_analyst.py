@@ -40,7 +40,7 @@ class SentimentAnalystAgent(BaseAgent):
             return {"sentiment_results": []}
 
         # Optional keyword pre-filter: skip events whose headline/summary
-        # does not contain at least one watchlist ticker symbol.
+        # does not contain at least one session ticker symbol.
         if self.settings.news_keyword_prefilter:
             ticker_set = set(self._tickers)
             news_events = [

@@ -57,7 +57,7 @@ class NewsIngestorAgent(BaseAgent):
     Responsibilities:
         - Delegate fetching to the injected provider.
         - Deduplicate articles already seen (by event_id).
-        - Filter articles to only those mentioning tickers on the watchlist.
+        - Filter articles to only those mentioning session tickers.
         - Publish each new NewsEvent to the event bus and return them in state.
     """
 
@@ -87,12 +87,11 @@ class NewsIngestorAgent(BaseAgent):
             )
             return {"news_events": events}
 
-        watchlist = self._tickers
-        self.logger.info("NewsIngestor: active tickers=%s", watchlist)
+        self.logger.info("NewsIngestor: active tickers=%s", self._tickers)
 
         try:
             candidates = await self._provider.fetch(
-                tickers=watchlist,
+                tickers=self._tickers,
                 since=state.get("last_poll"),
             )
         except Exception as exc:
@@ -110,7 +109,7 @@ class NewsIngestorAgent(BaseAgent):
 
         with Session(self._engine) as session:
             for event in candidates:
-                if not self._matches_watchlist(event.tickers):
+                if not self._matches_tickers(event.tickers):
                     continue
                 if event.event_id in seen_in_batch:
                     continue
@@ -143,7 +142,7 @@ class NewsIngestorAgent(BaseAgent):
         )
         return {"news_events": new_events}
 
-    def _matches_watchlist(self, tickers: list[str]) -> bool:
+    def _matches_tickers(self, tickers: list[str]) -> bool:
         """Return True if any ticker is in the session ticker list."""
         return bool(set(tickers) & set(self._tickers))
 

@@ -137,22 +137,22 @@ class TestParseDt:
 
 
 # ---------------------------------------------------------------------------
-# _matches_watchlist
+# _matches_tickers
 # ---------------------------------------------------------------------------
 
 
-class TestMatchesWatchlist:
+class TestMatchesTickers:
     def test_match_found(self, agent):
-        assert agent._matches_watchlist(["AAPL", "GOOG"]) is True
+        assert agent._matches_tickers(["AAPL", "GOOG"]) is True
 
     def test_no_match(self, agent):
-        assert agent._matches_watchlist(["GOOG", "AMZN"]) is False
+        assert agent._matches_tickers(["GOOG", "AMZN"]) is False
 
     def test_empty_tickers(self, agent):
-        assert agent._matches_watchlist([]) is False
+        assert agent._matches_tickers([]) is False
 
     def test_exact_match(self, agent):
-        assert agent._matches_watchlist(["NVDA"]) is True
+        assert agent._matches_tickers(["NVDA"]) is True
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +206,9 @@ class TestIsDuplicate:
 
 
 class TestRun:
-    async def test_run_returns_watchlist_events(self, agent, mock_provider):
+    async def test_run_returns_session_ticker_events(self, agent, mock_provider):
         aapl_event = _make_news_event("bz-1", "AAPL")
-        goog_event = _make_news_event("bz-2", "GOOG")  # not on watchlist
+        goog_event = _make_news_event("bz-2", "GOOG")  # not a session ticker
         mock_provider.fetch.return_value = [aapl_event, goog_event]
 
         result = await agent.run({})

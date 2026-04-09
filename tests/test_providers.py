@@ -57,7 +57,7 @@ def _make_event(event_id: str = "ev-1", ticker: str = "AAPL") -> NewsEvent:
 class TestProtocolCompliance:
     def test_rss_is_news_provider(self):
         from news_trade.providers.news.rss import RSSNewsProvider
-        p = RSSNewsProvider(watchlist=["AAPL"])
+        p = RSSNewsProvider()
         assert isinstance(p, NewsProvider)
 
     def test_benzinga_is_news_provider(self):

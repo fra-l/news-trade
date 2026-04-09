@@ -272,12 +272,11 @@ Key dependencies to inject:
   `get_historical_beat_rate(ticker)` for each actionable entry and attaches the result to
   `EstimatesData.historical_beat_rate` via `model_copy()`. Provider failures are swallowed
   with a WARNING log so the run is never aborted.
-- `watchlist_manager: WatchlistManager | None` — optional (backward-compatible default `None`);
-  when provided, `run()` calls `watchlist_manager.get_active_watchlist()` instead of
-  `settings.watchlist`. Pass the `cron_wl_manager` instance from `main.py`.
+- `tickers: list[str] | None` — optional; when provided, scans only those tickers; when
+  `None` (or empty), performs a broad market scan. Pass `selected_tickers` from `main.py`.
 
 Core logic:
-- Scans `today → today + 5 days` for watchlist tickers
+- Scans `today → today + 5 days` for session tickers
 - Filters to `entry.is_actionable` (2–5 days ahead)
 - Builds `EstimatesData` per ticker via `_build_estimates(entry)` (skips entries where
   `eps_estimate is None`); populates `state["estimates"]` regardless of dedup status

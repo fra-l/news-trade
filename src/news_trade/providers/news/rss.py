@@ -84,10 +84,10 @@ def _parse_dt(value: str) -> datetime:
         return datetime.now(UTC)
 
 
-def _extract_tickers_from_text(text: str, watchlist: set[str]) -> list[str]:
-    """Extract watchlist tickers mentioned in text via word-boundary match."""
+def _extract_tickers_from_text(text: str, tickers: set[str]) -> list[str]:
+    """Extract tickers mentioned in text via word-boundary match."""
     found = []
-    for ticker in watchlist:
+    for ticker in tickers:
         if re.search(rf"\b{re.escape(ticker)}\b", text):
             found.append(ticker)
     return found
@@ -99,10 +99,6 @@ class RSSNewsProvider:
     Combines Yahoo Finance per-ticker feeds with a global MarketWatch feed
     and the SEC EDGAR 8-K atom feed.
     """
-
-    def __init__(self, watchlist: list[str]) -> None:
-        self._watchlist = watchlist
-        self._watchlist_set = set(watchlist)
 
     @property
     def name(self) -> str:
@@ -135,12 +131,12 @@ class RSSNewsProvider:
                 resp = await client.get(_MARKETWATCH_RSS)
                 resp.raise_for_status()
                 items = _parse_rss_feed(resp.text, source="rss_marketwatch")
-                watchlist_set = set(tickers)
+                ticker_set = set(tickers)
                 for item in items:
                     if item.event_id not in seen_ids:
                         found = _extract_tickers_from_text(
                             item.headline + " " + item.summary,
-                            watchlist_set,
+                            ticker_set,
                         )
                         if found:
                             seen_ids.add(item.event_id)
