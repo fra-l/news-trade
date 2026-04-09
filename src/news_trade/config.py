@@ -35,6 +35,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # --- Anthropic / Claude ---
@@ -92,11 +93,17 @@ class Settings(BaseSettings):
         description="SQLAlchemy connection string",
     )
 
-    # --- Watchlist & trading parameters ---
-    watchlist: list[str] = Field(
-        default=["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"],
-        description="Tickers to monitor for news",
+    # --- Startup ticker selection ---
+    small_cap_max_market_cap_usd: int = Field(
+        default=2_000_000_000,
+        description="Market-cap ceiling (USD) for small-cap filter at startup",
     )
+    max_startup_tickers: int = Field(
+        default=5,
+        description="Max tickers selected at startup (-1 = unlimited)",
+    )
+
+    # --- Trading parameters ---
     news_poll_interval_sec: int = Field(
         default=30,
         description="Seconds between news API polls",

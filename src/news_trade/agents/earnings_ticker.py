@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from news_trade.config import Settings
     from news_trade.services.event_bus import EventBus
     from news_trade.services.stage1_repository import Stage1Repository
-    from news_trade.services.watchlist_manager import WatchlistManager
 
 # Only synthesise events for tickers reporting within this many calendar days
 _HORIZON_DAYS = 7
@@ -65,11 +64,11 @@ class EarningsTickerNode(BaseAgent):
         self,
         settings: Settings,
         event_bus: EventBus,
-        watchlist_manager: WatchlistManager,
+        tickers: list[str],
         stage1_repo: Stage1Repository,
     ) -> None:
         super().__init__(settings, event_bus)
-        self._watchlist_manager = watchlist_manager
+        self._tickers = tickers
         self._stage1_repo = stage1_repo
         self._engine = build_engine(settings)
 
@@ -110,7 +109,7 @@ class EarningsTickerNode(BaseAgent):
             nothing to do.
         """
         today = date.today()
-        watchlist = set(self._watchlist_manager.get_active_watchlist())
+        watchlist = set(self._tickers)
         events: list[NewsEvent] = []
         tickers: list[str] = []
 

@@ -17,7 +17,6 @@ All services receive dependencies via constructor injection.
 | `stage1_repository.py` | `Stage1Repository` | Stage 1 position CRUD + outcome reflection |
 | `session_reporter.py` | `SessionReporter` | Write JSON session reports on exit; read + summarise previous session on startup |
 | `event_bus.py` | `EventBus` | Async Redis pub/sub wrapper |
-| `watchlist_manager.py` | `WatchlistManager` | Runtime watchlist backed by SQLite; CLI scan + operator selection |
 | `telegram_bot.py` | `TelegramBotService` | Telegram operator interface — push notifications (drawdown halt, trade execution), read-only query commands (`/status`, `/portfolio`, `/signals`, `/help`), operator stop command (`/stop`) |
 
 ---
@@ -131,7 +130,6 @@ For tests, use `Base.metadata.create_all(engine)` directly on an in-memory engin
 | `stage1_positions` | **String (UUID)** | UUID set in application code before insert |
 | `earnings_outcomes` | Integer autoincrement | `stage1_id` has `unique=True` for idempotency |
 | `orders` | Integer autoincrement | `order_id` is the business key; `close_after_date` nullable Date column drives PEAD expiry |
-| `watchlist_selections` | Integer autoincrement | Append-only audit log; `load_selected()` reads most-recent row by `saved_at` |
 
 `OrderRow.close_after_date` (nullable `Date`, indexed) is set at insert time by
 `ExecutionAgent._log_order()` when the signal carries `horizon_days`. Upserts leave the
@@ -182,37 +180,6 @@ file on disk.
 **CLI flags** (see `main.py`):
 - `--resume-session` — load latest session file on startup.
 - `--session-file PATH` — load a specific file (implies `--resume-session`).
-
----
-
-## `watchlist_manager.py` — Runtime Watchlist Selection
-
-```python
-manager = WatchlistManager(settings, session, primary=CalendarProvider, fallback=CalendarProvider)
-tickers  = manager.get_active_watchlist()          # DB selection or settings.watchlist fallback
-entries  = await manager.scan_candidates(from_d, to_d)  # is_candidate=True entries, sorted by date
-manager.save_selection(["AAPL", "NVDA"])           # persists new WatchlistSelectionRow
-tickers  = manager.load_selected()                 # most-recent row, or [] if none
-```
-
-**Priority:** `load_selected()` → `settings.watchlist` (fallback when no DB entry).
-
-**`scan_candidates()`** performs a **broad market scan** by passing an empty ticker list
-to the primary `CalendarProvider` (Finnhub if `FINNHUB_API_KEY` is set, else FMP), which
-returns all companies reporting in the date window — not just the current watchlist.
-`FMPBroadScanError` (HTTP 403) is caught and retried with the static `settings.watchlist`
-tickers when the FMP key is on the free tier.  The last-resort fallback is
-`YFinanceCalendarProvider`, which always requires explicit tickers.
-Filters to `EarningsCalendarEntry.is_candidate` (`1 ≤ days_until_report ≤ 31`); results
-sorted by `report_date` ascending.
-
-**Session:** sync SQLAlchemy `Session` (same as `Stage1Repository`).  `save_selection()`
-appends a new row — old rows are retained for audit.
-
-Used by: `NewsIngestorAgent`, `SentimentAnalystAgent`, `EarningsCalendarAgent` (all inject
-it in `__init__`).  Constructed once in `build_pipeline()` (for pipeline agents) and once
-in `main.py` (for cron agents).  The CLI (`cli/select_watchlist.py`) constructs its own
-instance.
 
 ---
 

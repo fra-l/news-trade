@@ -40,17 +40,12 @@ def mock_provider():
     return provider
 
 
-@pytest.fixture()
-def mock_watchlist_manager():
-    wlm = MagicMock()
-    wlm.get_active_watchlist.return_value = ["AAPL", "MSFT", "NVDA"]
-    return wlm
+_TICKERS = ["AAPL", "MSFT", "NVDA"]
 
 
 @pytest.fixture()
-def agent(mock_provider, mock_watchlist_manager):
+def agent(mock_provider):
     settings = MagicMock()
-    settings.watchlist = ["AAPL", "MSFT", "NVDA"]
     settings.database_url = "sqlite://"  # in-memory SQLite — no file needed
     settings.news_keyword_prefilter = True
 
@@ -66,7 +61,7 @@ def agent(mock_provider, mock_watchlist_manager):
         mock_engine_factory.return_value = engine
         a = NewsIngestorAgent(
             settings, event_bus, provider=mock_provider,
-            watchlist_manager=mock_watchlist_manager,
+            tickers=_TICKERS,
         )
 
     return a
@@ -251,14 +246,14 @@ class TestRun:
         assert call_args[0][0] == "news_events"
         assert isinstance(call_args[0][1], NewsEvent)
 
-    async def test_run_passes_watchlist_to_provider(self, agent, mock_provider):
+    async def test_run_passes_tickers_to_provider(self, agent, mock_provider):
         mock_provider.fetch.return_value = []
 
         await agent.run({})
 
         mock_provider.fetch.assert_awaited_once()
         call_kwargs = mock_provider.fetch.call_args
-        assert call_kwargs[1]["tickers"] == ["AAPL", "MSFT", "NVDA"]
+        assert call_kwargs[1]["tickers"] == _TICKERS
 
     async def test_run_returns_empty_on_no_events(self, agent, mock_provider):
         mock_provider.fetch.return_value = []

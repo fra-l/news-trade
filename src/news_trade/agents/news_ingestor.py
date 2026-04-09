@@ -13,7 +13,6 @@ from news_trade.models.events import EventType
 from news_trade.providers.base import NewsProvider
 from news_trade.services.database import build_engine
 from news_trade.services.tables import NewsEventRow
-from news_trade.services.watchlist_manager import WatchlistManager
 
 # Ordered from most-specific to least-specific to avoid false matches
 _KEYWORD_MAP: list[tuple[frozenset[str], EventType]] = [
@@ -67,11 +66,11 @@ class NewsIngestorAgent(BaseAgent):
         settings,
         event_bus,
         provider: NewsProvider,
-        watchlist_manager: WatchlistManager,
+        tickers: list[str],
     ) -> None:
         super().__init__(settings, event_bus)
         self._provider = provider
-        self._watchlist_manager = watchlist_manager
+        self._tickers = tickers
         self._engine = build_engine(settings)
 
     async def run(self, state: dict) -> dict:  # type: ignore[override]
@@ -88,8 +87,8 @@ class NewsIngestorAgent(BaseAgent):
             )
             return {"news_events": events}
 
-        watchlist = self._watchlist_manager.get_active_watchlist()
-        self.logger.info("NewsIngestor: active watchlist=%s", watchlist)
+        watchlist = self._tickers
+        self.logger.info("NewsIngestor: active tickers=%s", watchlist)
 
         try:
             candidates = await self._provider.fetch(
@@ -145,9 +144,8 @@ class NewsIngestorAgent(BaseAgent):
         return {"news_events": new_events}
 
     def _matches_watchlist(self, tickers: list[str]) -> bool:
-        """Return True if any ticker is on the configured watchlist."""
-        watchlist = set(self._watchlist_manager.get_active_watchlist())
-        return bool(set(tickers) & watchlist)
+        """Return True if any ticker is in the session ticker list."""
+        return bool(set(tickers) & set(self._tickers))
 
     def _is_duplicate(self, event_id: str, session: Session) -> bool:
         """Check whether this event has already been ingested."""

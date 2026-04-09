@@ -23,7 +23,6 @@ from news_trade.services.tables import Base, NewsEventRow
 
 def _make_settings(**kwargs: object) -> MagicMock:
     m = MagicMock()
-    m.watchlist = ["AAPL", "NVDA"]
     m.database_url = "sqlite://"
     for k, v in kwargs.items():
         setattr(m, k, v)
@@ -66,10 +65,8 @@ def _make_agent(
     engine=None,
 ) -> EarningsTickerNode:
     """Build an EarningsTickerNode with an in-memory SQLite DB."""
-    settings = _make_settings(watchlist=watchlist or ["AAPL", "NVDA"])
+    settings = _make_settings()
     event_bus = MagicMock(spec=EventBus)
-    wl_manager = MagicMock()
-    wl_manager.get_active_watchlist.return_value = settings.watchlist
     stage1_repo = MagicMock()
 
     with patch("news_trade.agents.earnings_ticker.build_engine") as mock_engine_factory:
@@ -79,7 +76,7 @@ def _make_agent(
         agent = EarningsTickerNode(
             settings=settings,
             event_bus=event_bus,
-            watchlist_manager=wl_manager,
+            tickers=watchlist or ["AAPL", "NVDA"],
             stage1_repo=stage1_repo,
         )
     return agent
@@ -206,24 +203,15 @@ class TestEarningsTickerNodeRun:
         assert result["active_tickers"] == []
         assert result.get("errors") is None
 
-    async def test_returns_errors_on_watchlist_failure(self):
+    async def test_returns_errors_on_gather_failure(self):
+        """When _gather_active_events raises, run() returns errors and empty lists."""
         engine = _make_engine()
-        settings = _make_settings()
-        event_bus = MagicMock(spec=EventBus)
-        wl_manager = MagicMock()
-        wl_manager.get_active_watchlist.side_effect = RuntimeError("DB error")
-        stage1_repo = MagicMock()
+        agent = _make_agent(engine=engine)
 
-        with patch("news_trade.agents.earnings_ticker.build_engine") as mock_factory:
-            mock_factory.return_value = engine
-            agent = EarningsTickerNode(
-                settings=settings,
-                event_bus=event_bus,
-                watchlist_manager=wl_manager,
-                stage1_repo=stage1_repo,
-            )
-
-        result = await agent.run({})
+        with patch.object(
+            agent, "_gather_active_events", side_effect=RuntimeError("DB error")
+        ):
+            result = await agent.run({})
 
         assert result["news_events"] == []
         assert result["active_tickers"] == []

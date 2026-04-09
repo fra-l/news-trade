@@ -66,10 +66,14 @@ def _make_stub_event_bus() -> EventBus:
 _settings = get_settings()
 create_tables(_settings)  # ensure schema exists; no-op if already up-to-date
 
+# Hardcoded ticker set for studio use (no interactive startup in Studio).
+# Covers common development / small-cap scenarios; override by editing this list.
+_STUDIO_TICKERS: list[str] = ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL", "META"]
+
 # --------------------------------------------------------------------------- #
 # Normal graph (identical to production)                                       #
 # --------------------------------------------------------------------------- #
-graph = build_pipeline(_settings, _make_stub_event_bus())
+graph = build_pipeline(_settings, _make_stub_event_bus(), _STUDIO_TICKERS)
 
 
 # --------------------------------------------------------------------------- #
@@ -149,33 +153,22 @@ def _build_replay_pipeline() -> StateGraph:
     from news_trade.agents.sentiment_analyst import SentimentAnalystAgent
     from news_trade.agents.signal_generator import SignalGeneratorAgent
     from news_trade.providers import (
-        get_calendar_provider,
         get_market_data_provider,
         get_news_provider,
         get_sentiment_provider,
     )
-    from news_trade.providers.calendar.yfinance_provider import YFinanceCalendarProvider
     from news_trade.services.confidence_scorer import ConfidenceScorer
     from news_trade.services.database import build_session_factory
     from news_trade.services.estimates_renderer import EstimatesRenderer
     from news_trade.services.llm_client import LLMClientFactory
     from news_trade.services.stage1_repository import Stage1Repository
-    from news_trade.services.watchlist_manager import WatchlistManager
 
     event_bus = _make_stub_event_bus()
-
-    wl_session = build_session_factory(_settings)()
-    wl_manager = WatchlistManager(
-        settings=_settings,
-        session=wl_session,
-        primary=get_calendar_provider(_settings),
-        fallback=YFinanceCalendarProvider(),
-    )
 
     news_agent = NewsIngestorAgent(
         _settings, event_bus,
         provider=get_news_provider(_settings),
-        watchlist_manager=wl_manager,
+        tickers=_STUDIO_TICKERS,
     )
     market_agent = MarketDataAgent(
         _settings, event_bus, provider=get_market_data_provider(_settings)
@@ -183,7 +176,7 @@ def _build_replay_pipeline() -> StateGraph:
     sentiment_agent = SentimentAnalystAgent(
         _settings, event_bus,
         provider=get_sentiment_provider(_settings),
-        watchlist_manager=wl_manager,
+        tickers=_STUDIO_TICKERS,
     )
 
     shared_session = build_session_factory(_settings)()

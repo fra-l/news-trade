@@ -38,10 +38,10 @@ class BaseAgent(ABC):
 All agents inherit `BaseAgent`. Additional dependencies (providers, db session,
 repositories) are injected in the subclass `__init__` — never fetched from globals.
 
-`NewsIngestorAgent`, `SentimentAnalystAgent`, and `EarningsCalendarAgent` each accept a
-`watchlist_manager: WatchlistManager` (required for the first two, optional for the third)
-and call `get_active_watchlist()` wherever `settings.watchlist` was previously used.  This
-lets the runtime watchlist update between cycles without a restart.
+`NewsIngestorAgent`, `SentimentAnalystAgent`, `EarningsTickerNode`, and `EarningsCalendarAgent`
+each accept a `tickers: list[str]` parameter (required for the first three, optional for
+`EarningsCalendarAgent`). The list is the session ticker selection chosen at startup via
+`StartupSelector` and is fixed for the lifetime of the process.
 
 ---
 
@@ -58,7 +58,7 @@ lets the runtime watchlist update between cycles without a restart.
 | `RiskManagerAgent` | `trade_signals`, `portfolio` | `approved_signals`, `rejected_signals`, `system_halted` |
 | `HaltHandlerAgent` | `system_halted`, `portfolio` | `errors` |
 | `ExecutionAgent` | `approved_signals` | `orders`, `errors` |
-| `EarningsCalendarAgent` | — (reads watchlist via `WatchlistManager`) | `news_events`, `estimates`, `errors` |
+| `EarningsCalendarAgent` | — (uses `tickers` list passed at construction) | `news_events`, `estimates`, `errors` |
 
 `news_events` and `errors` use `operator.add` reducers — parallel nodes accumulate
 without overwriting each other. `PortfolioFetcherAgent`, `NewsIngestorAgent`, and

@@ -78,13 +78,15 @@ src/news_trade/
 │   └── calendar/          # FMPCalendarProvider (primary), YFinanceCalendarProvider (fallback)
 ├── services/              # Business logic + persistence → see services/CLAUDE.md
 │   ├── database.py        # Engine + session factory + create_tables() [runs alembic upgrade head]
-│   ├── tables.py          # ORM table definitions (6 tables)
+│   ├── tables.py          # ORM table definitions (5 tables)
 │   ├── llm_client.py      # LLMClient Protocol, AnthropicLLMClient, OllamaLLMClient, LLMClientFactory
 │   ├── estimates_renderer.py  # Deterministic FMP data → narrative formatter
 │   ├── confidence_scorer.py   # 4-component weighted scorer + confidence gate
 │   ├── stage1_repository.py   # Stage 1 position CRUD + outcome reflection (Pattern D)
 │   ├── telegram_bot.py    # Telegram operator interface (notifications, approval gate, commands)
 │   └── event_bus.py       # Async Redis pub/sub wrapper
+├── cli/
+│   └── startup_selector.py    # Interactive small-cap ticker selection at startup
 └── py.typed               # PEP 561 marker
 
 tests/                     # pytest suite — see tests/CLAUDE.md for conventions
@@ -150,7 +152,8 @@ to `.env` before running.
 | `FMP_API_KEY` | — | FMP earnings calendar (fallback) + historical EPS beat rates; falls back to yfinance when absent |
 | `REDIS_URL` | `redis://localhost:6379/0` | Event bus |
 | `DATABASE_URL` | `sqlite:///data/trades.db` | Persistence |
-| `WATCHLIST` | `["AAPL","MSFT","GOOGL","AMZN","TSLA"]` | Tickers to monitor |
+| `SMALL_CAP_MAX_MARKET_CAP_USD` | `2000000000` | Market-cap ceiling (USD) for small-cap filter at startup |
+| `MAX_STARTUP_TICKERS` | `5` | Max tickers selected at startup (-1 = unlimited) |
 | `NEWS_PROVIDER` | `rss` | `rss` or `benzinga` |
 | `MARKET_DATA_PROVIDER` | `yfinance` | `yfinance`, `polygon_free`, `polygon_paid` |
 | `SENTIMENT_PROVIDER` | `claude` | `claude` or `keyword` |
@@ -188,8 +191,8 @@ cp .env.example .env             # Configure environment variables
 docker compose up -d             # Start Redis
 
 # Run
-uv run news-trade                # Start the main polling loop
-uv run news-trade --once         # Run a single cycle and exit (debug mode)
+uv run news-trade                # Start — fetches small-cap earnings, prompts for ticker selection, then loops
+uv run news-trade --once         # Run a single cycle and exit (non-interactive: auto-selects top-N tickers)
 uv run news-trade --replay-ticker AAPL            # Replay last 5 stored AAPL articles (implies --once)
 uv run news-trade --replay-ticker AAPL --replay-limit 10  # Replay last 10 stored articles
 uv run news-trade --resume-session                # Log previous session summary on startup (latest file)
@@ -297,8 +300,11 @@ All PRs must pass `tests.yml` before merging.
 
 10. **SQLite default** — Zero-config for development; swap to PostgreSQL via `DATABASE_URL`.
 
-11. **Operator-driven dynamic watchlist** — `WatchlistManager` surfaces upcoming earnings via
-    `uv run select-watchlist`; the operator picks tickers interactively. The selection is
-    persisted to `WatchlistSelectionRow` and picked up on the next polling cycle — no restart.
-    `settings.watchlist` remains the fallback when no DB selection exists. Full automation
-    (auto-add all reporters) was rejected to keep API costs and risk exposure bounded.
+11. **Startup small-cap ticker selection** — At launch, `StartupSelector` fetches the
+    earnings calendar for the next 14 days, filters to small-cap companies
+    (market cap ≤ `SMALL_CAP_MAX_MARKET_CAP_USD`, default $2B via yfinance), and prompts
+    the operator to pick up to `MAX_STARTUP_TICKERS` (default 5, -1 = unlimited). The
+    selected `list[str]` is passed directly to all agents for the session. In non-interactive
+    mode (no TTY) the top-N by nearest report date are auto-selected. No DB persistence —
+    selections are per-session and restart-stable. Full automation was rejected to keep API
+    costs and risk exposure bounded.

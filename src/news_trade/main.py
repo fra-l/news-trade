@@ -9,7 +9,7 @@ import os
 import signal
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,7 @@ from news_trade.agents.earnings_calendar import EarningsCalendarAgent
 from news_trade.agents.execution import ExecutionAgent
 from news_trade.agents.expiry_scanner import ExpiryScanner
 from news_trade.agents.halt_handler import HaltHandlerAgent
+from news_trade.cli.startup_selector import SCAN_DAYS, StartupSelector
 from news_trade.config import Settings, get_settings
 from news_trade.graph.pipeline import build_pipeline
 from news_trade.graph.state import PipelineState
@@ -39,7 +40,6 @@ from news_trade.services.session_reporter import SessionReporter
 from news_trade.services.stage1_repository import Stage1Repository
 from news_trade.services.tables import NewsEventRow
 from news_trade.services.telegram_bot import TelegramBotService
-from news_trade.services.watchlist_manager import WatchlistManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -212,8 +212,27 @@ async def main(
     logger.info("Initialising database …")
     create_tables(settings)
 
+    # ------------------------------------------------------------------
+    # Startup ticker selection — fetch small-cap earnings for next 14 days
+    # and let the operator choose which tickers to analyse this session.
+    # ------------------------------------------------------------------
+    logger.info(
+        "Fetching small-cap earnings candidates for the next %d days …", SCAN_DAYS
+    )
+    selector = StartupSelector(settings, get_calendar_provider(settings))
+    today = date.today()
+    candidates = await selector.fetch_candidates(
+        today, today + timedelta(days=SCAN_DAYS)
+    )
+    selected_tickers = await selector.prompt_selection(candidates)
+    logger.info(
+        "Session tickers selected: %s  (max_startup_tickers=%s)",
+        selected_tickers,
+        settings.max_startup_tickers,
+    )
+
     logger.info("Building LangGraph pipeline …")
-    pipeline = build_pipeline(settings, event_bus)
+    pipeline = build_pipeline(settings, event_bus, selected_tickers)
 
     # ------------------------------------------------------------------
     # Cron agents — run outside the LangGraph pipeline on a daily schedule
@@ -222,13 +241,6 @@ async def main(
     cron_session = build_session_factory(settings)()
     cron_stage1_repo = Stage1Repository(cron_session)
 
-    cron_wl_manager = WatchlistManager(
-        settings=settings,
-        session=cron_session,
-        primary=get_calendar_provider(settings),
-        fallback=YFinanceCalendarProvider(),
-    )
-
     earnings_agent = EarningsCalendarAgent(
         settings,
         event_bus,
@@ -236,7 +248,7 @@ async def main(
         fallback=YFinanceCalendarProvider(),
         engine=cron_engine,
         estimates_provider=get_estimates_provider(settings),
-        watchlist_manager=cron_wl_manager,
+        tickers=selected_tickers,
     )
     expiry_scanner = ExpiryScanner(settings, event_bus, stage1_repo=cron_stage1_repo)
 
@@ -296,8 +308,8 @@ async def main(
     )
 
     logger.info(
-        "Starting news-trade loop  (watchlist=%s, interval=%ds)",
-        settings.watchlist,
+        "Starting news-trade loop  (tickers=%s, interval=%ds)",
+        selected_tickers,
         settings.news_poll_interval_sec,
     )
 

@@ -6,7 +6,6 @@ from typing import Any
 
 from news_trade.agents.base import BaseAgent
 from news_trade.providers.base import SentimentProvider
-from news_trade.services.watchlist_manager import WatchlistManager
 
 
 class SentimentAnalystAgent(BaseAgent):
@@ -23,11 +22,11 @@ class SentimentAnalystAgent(BaseAgent):
         settings,
         event_bus,
         provider: SentimentProvider,
-        watchlist_manager: WatchlistManager,
+        tickers: list[str],
     ) -> None:
         super().__init__(settings, event_bus)
         self._provider = provider
-        self._watchlist_manager = watchlist_manager
+        self._tickers = tickers
 
     async def run(self, state: dict) -> dict:
         """Analyse sentiment for all news events in state.
@@ -43,10 +42,10 @@ class SentimentAnalystAgent(BaseAgent):
         # Optional keyword pre-filter: skip events whose headline/summary
         # does not contain at least one watchlist ticker symbol.
         if self.settings.news_keyword_prefilter:
-            watchlist_set = set(self._watchlist_manager.get_active_watchlist())
+            ticker_set = set(self._tickers)
             news_events = [
                 e for e in news_events
-                if set(e.tickers) & watchlist_set
+                if set(e.tickers) & ticker_set
             ]
 
         if not news_events:

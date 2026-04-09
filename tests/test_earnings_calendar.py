@@ -31,7 +31,6 @@ from news_trade.services.tables import Base, NewsEventRow
 def _make_settings(**kwargs: object) -> Settings:
     defaults: dict[str, object] = dict(
         anthropic_api_key="test",
-        watchlist=["AAPL", "MSFT"],
     )
     return Settings(**(defaults | kwargs))  # type: ignore[arg-type]
 

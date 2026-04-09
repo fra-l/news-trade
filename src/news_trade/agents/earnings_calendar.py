@@ -22,7 +22,6 @@ from news_trade.models.surprise import EstimatesData
 from news_trade.providers.base import CalendarProvider, EstimatesProvider
 from news_trade.services.event_bus import EventBus
 from news_trade.services.tables import NewsEventRow
-from news_trade.services.watchlist_manager import WatchlistManager
 
 _SCAN_DAYS_AHEAD = 5
 
@@ -47,14 +46,14 @@ class EarningsCalendarAgent(BaseAgent):
         fallback: CalendarProvider,
         engine: Engine,
         estimates_provider: EstimatesProvider | None = None,
-        watchlist_manager: WatchlistManager | None = None,
+        tickers: list[str] | None = None,
     ) -> None:
         super().__init__(settings, event_bus)
         self._primary = primary
         self._fallback = fallback
         self._engine = engine
         self._estimates_provider = estimates_provider
-        self._watchlist_manager = watchlist_manager
+        self._tickers = tickers or []
 
     async def run(self, state: dict) -> dict:  # type: ignore[type-arg]
         """Scan the earnings calendar and return synthesised EARN_PRE events.
@@ -64,11 +63,7 @@ class EarningsCalendarAgent(BaseAgent):
         """
         today = date.today()
         to_date = today + timedelta(days=_SCAN_DAYS_AHEAD)
-        watchlist: list[str] = (
-            self._watchlist_manager.get_active_watchlist()
-            if self._watchlist_manager is not None
-            else self.settings.watchlist
-        )
+        watchlist: list[str] = self._tickers
 
         # --- Fetch from primary, fall back if empty ---
         entries = await self._fetch_with_fallback(watchlist, today, to_date)

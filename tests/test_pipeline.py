@@ -42,7 +42,6 @@ def mock_settings() -> MagicMock:
     m.news_provider = NewsProviderType.RSS
     m.market_data_provider = MarketDataProviderType.YFINANCE
     m.sentiment_provider = SentimentProviderType.KEYWORD
-    m.watchlist = ["AAPL"]
     m.llm_provider = "anthropic"
     m.llm_quick_model = "claude-haiku-4-5-20251001"
     m.llm_deep_model = "claude-sonnet-4-6"
@@ -56,7 +55,7 @@ def mock_event_bus() -> MagicMock:
 
 @pytest.fixture()
 def compiled_graph(mock_settings, mock_event_bus):
-    return build_pipeline(mock_settings, mock_event_bus)
+    return build_pipeline(mock_settings, mock_event_bus, ["AAPL"])
 
 
 class TestBuildPipeline:
