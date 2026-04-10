@@ -172,6 +172,8 @@ to `.env` before running.
 | `EARN_MIN_ANALYST_COUNT` | `3` | Minimum analyst count for non-floor coverage score |
 | `EARN_GUIDANCE_WEIGHT` | `0.20` | Weight of guidance sentiment in composite surprise |
 | `EARN_DEFAULT_BEAT_RATE` | `0.65` | Fallback beat rate for EARN_PRE when < 4 observed outcomes exist |
+| `EARN_PRE_HORIZON_DAYS` | `14` | Look-ahead window (days) for pre-earnings pipeline — controls EarningsCalendarAgent scan range, EarningsTickerNode filter, and StartupSelector range |
+| `EARN_THESIS_FLIP_CONVICTION_THRESHOLD` | `0.65` | Min thesis-debate conviction required to flip (REVERSE) an open EARN_PRE position (Phase 2) |
 | `PEAD_HORIZON_DAYS` | `5` | Calendar days after EARN_BEAT/MISS fill before auto-close via PEAD expiry cron |
 | `MAX_OPEN_POSITIONS` | `5` | Max concurrent open positions (Stage 2 ADD exempt) |
 | `RISK_DRY_RUN` | `false` | Log risk rejections without blocking — calibration mode |

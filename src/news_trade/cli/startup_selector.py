@@ -28,10 +28,6 @@ logger = logging.getLogger(__name__)
 # Semaphore cap for concurrent yfinance market-cap lookups
 _MARKET_CAP_CONCURRENCY = 20
 
-# Scan window used by main.py; exposed here so tests can import it
-SCAN_DAYS = 14
-
-
 class StartupSelector:
     """Fetch small-cap earnings candidates and prompt the operator to select tickers."""
 

@@ -24,6 +24,7 @@ from news_trade.services.tables import Base, NewsEventRow
 def _make_settings(**kwargs: object) -> MagicMock:
     m = MagicMock()
     m.database_url = "sqlite://"
+    m.earn_pre_horizon_days = 7
     for k, v in kwargs.items():
         setattr(m, k, v)
     return m

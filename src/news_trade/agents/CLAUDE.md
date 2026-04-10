@@ -11,7 +11,7 @@ compute their stage, write results back, and return the updated state.
 |---|---|---|
 | `PortfolioFetcherAgent` | `portfolio_fetcher.py` | **Done — 1st parallel branch from START; fetches Alpaca account + positions concurrently via `asyncio.gather`** |
 | `NewsIngestorAgent` | `news_ingestor.py` | **Done — 2nd parallel branch from START** |
-| `EarningsTickerNode` | `earnings_ticker.py` | **Done — 3rd parallel branch from START; DB-only; synthesises ephemeral EARN_PRE events for tickers with earnings in next 1–7 days** |
+| `EarningsTickerNode` | `earnings_ticker.py` | **Done — 3rd parallel branch from START; DB-only; synthesises ephemeral EARN_PRE events for tickers with earnings in next 1–`earn_pre_horizon_days` days** |
 | `MarketDataAgent` | `market_data.py` | **Done — runs in parallel with SentimentAnalystAgent from analysis_fan** |
 | `SentimentAnalystAgent` | `sentiment_analyst.py` | **Done — runs in parallel with MarketDataAgent from analysis_fan** |
 | `SignalGeneratorAgent` | `signal_generator.py` | **Done — Pattern A implemented; parallel bull/bear debate via `asyncio.gather`; OPEN guard in `_handle_earn_pre`** |
@@ -278,8 +278,8 @@ Key dependencies to inject:
   `None` (or empty), performs a broad market scan. Pass `selected_tickers` from `main.py`.
 
 Core logic:
-- Scans `today → today + 5 days` for session tickers
-- Filters to `entry.is_actionable` (2–5 days ahead)
+- Scans `today → today + earn_pre_horizon_days days` for session tickers (default 14; `_SCAN_DAYS_AHEAD` constant removed)
+- Filters to `1 <= entry.days_until_report <= settings.earn_pre_horizon_days` (`is_actionable` property removed from model)
 - Builds `EstimatesData` per ticker via `_build_estimates(entry)` (skips entries where
   `eps_estimate is None`); populates `state["estimates"]` regardless of dedup status
 - Deduplicates events via `event_id = f"calendar_earn_pre_{ticker}_{report_date}"`
@@ -332,3 +332,7 @@ ExecutionAgent.scan_expired_pead — cron, hour=9, minute=45, day_of_week="mon-f
 `Stage1Repository` (via `cron_stage1_repo`).
 `scheduler.start()` is called before the `while True` loop; `scheduler.shutdown(wait=False)`
 runs in the `finally` block alongside `event_bus.close()`.
+
+**Startup seed:** immediately after `scheduler.start()`, `main.py` calls
+`await earnings_agent.run({})` to populate the DB before the first pipeline cycle. Failures
+are logged at WARNING and do not abort startup (cron will reseed at 07:00 ET).

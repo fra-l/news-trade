@@ -23,7 +23,7 @@ from news_trade.agents.earnings_calendar import EarningsCalendarAgent
 from news_trade.agents.execution import ExecutionAgent
 from news_trade.agents.expiry_scanner import ExpiryScanner
 from news_trade.agents.halt_handler import HaltHandlerAgent
-from news_trade.cli.startup_selector import SCAN_DAYS, StartupSelector
+from news_trade.cli.startup_selector import StartupSelector
 from news_trade.config import Settings, get_settings
 from news_trade.graph.pipeline import build_pipeline
 from news_trade.graph.state import PipelineState
@@ -235,13 +235,14 @@ async def main(
     # Startup ticker selection — fetch small-cap earnings for next 14 days
     # and let the operator choose which tickers to analyse this session.
     # ------------------------------------------------------------------
+    scan_days = settings.earn_pre_horizon_days
     logger.info(
-        "Fetching small-cap earnings candidates for the next %d days …", SCAN_DAYS
+        "Fetching small-cap earnings candidates for the next %d days …", scan_days
     )
     selector = StartupSelector(settings, get_calendar_provider(settings))
     today = date.today()
     candidates = await selector.fetch_candidates(
-        today, today + timedelta(days=SCAN_DAYS)
+        today, today + timedelta(days=scan_days)
     )
     selected_tickers = await selector.prompt_selection(candidates)
     logger.info(
@@ -325,6 +326,16 @@ async def main(
         "Cron scheduler started (earnings_calendar=07:00 ET, expiry_scanner=07:15 ET, "
         "pead_expiry_scanner=09:45 ET)"
     )
+
+    logger.info("Seeding earnings calendar DB at startup …")
+    try:
+        _cal_result = await earnings_agent.run({})
+        logger.info(
+            "Startup calendar seed: %d EARN_PRE event(s) published",
+            len(_cal_result.get("news_events", [])),
+        )
+    except Exception as _exc:
+        logger.warning("Startup calendar seed failed (non-fatal): %s", _exc)
 
     logger.info(
         "Starting news-trade loop  (tickers=%s, interval=%ds)",

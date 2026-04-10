@@ -32,9 +32,6 @@ if TYPE_CHECKING:
     from news_trade.services.event_bus import EventBus
     from news_trade.services.stage1_repository import Stage1Repository
 
-# Only synthesise events for tickers reporting within this many calendar days
-_HORIZON_DAYS = 7
-
 # event_id prefix used by EarningsCalendarAgent cron — we query rows with this prefix
 _CRON_PREFIX = "calendar_earn_pre_"
 
@@ -54,7 +51,8 @@ class EarningsTickerNode(BaseAgent):
     Logic:
         1. Query ``news_events`` for rows with ``event_id LIKE 'calendar_earn_pre_%'``.
         2. Parse ``report_date`` from the event_id suffix (``rsplit("_", 1)[-1]``).
-        3. Filter to tickers with ``1 <= days_until_report <= _HORIZON_DAYS``.
+        3. Filter to tickers with
+           ``1 <= days_until_report <= settings.earn_pre_horizon_days``.
         4. Cross-reference with the session tickers; skip tickers not on it.
         5. Synthesise one ephemeral NewsEvent(event_type=EARN_PRE) per ticker.
         6. Return ``{"news_events": [...], "active_tickers": [...]}``.
@@ -137,7 +135,7 @@ class EarningsTickerNode(BaseAgent):
                 continue
 
             days_until = (report_date - today).days
-            if not (1 <= days_until <= _HORIZON_DAYS):
+            if not (1 <= days_until <= self.settings.earn_pre_horizon_days):
                 continue
 
             # Extract ticker: everything between prefix and the trailing _YYYY-MM-DD

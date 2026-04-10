@@ -172,6 +172,23 @@ class Settings(BaseSettings):
             "has fewer than 4 observed outcomes and no FMP data is available"
         ),
     )
+    earn_pre_horizon_days: int = Field(
+        default=14,
+        description=(
+            "Look-ahead window (calendar days) for the pre-earnings pipeline. "
+            "Controls EarningsCalendarAgent scan range, EarningsTickerNode filter, "
+            "and StartupSelector scan range. Default 14 matches the original "
+            "StartupSelector SCAN_DAYS constant."
+        ),
+    )
+    earn_thesis_flip_conviction_threshold: float = Field(
+        default=0.65,
+        description=(
+            "Minimum thesis-debate conviction required to flip (REVERSE) an existing "
+            "open Stage 1 EARN_PRE position when a new debate contradicts "
+            "its direction."
+        ),
+    )
 
     # --- Cost controls ---
     claude_daily_budget_usd: float = Field(
