@@ -19,7 +19,7 @@ Each of the three data-facing agents receives a **provider** via constructor inj
 
 ```
 NewsIngestorAgent ←── NewsProvider      (rss | benzinga)
-MarketDataAgent   ←── MarketDataProvider (yfinance | polygon_free | polygon_paid | alpaca)
+MarketDataAgent   ←── MarketDataProvider (yfinance | massive_free | massive_paid | alpaca)
 SentimentAnalystAgent ←── SentimentProvider (claude | keyword)
 ```
 
@@ -50,8 +50,8 @@ SentimentAnalystAgent ←── SentimentProvider (claude | keyword)
 | Provider | Type | Key |
 |---|---|---|
 | `YFinanceMarketProvider` | Free | — |
-| `PolygonFreeMarketProvider` | Free | `POLYGON_API_KEY` |
-| `PolygonPaidMarketProvider` | Premium | `POLYGON_API_KEY` |
+| `MassiveFreeMarketProvider` | Free | `MASSIVE_API_KEY` |
+| `MassivePaidMarketProvider` | Premium | `MASSIVE_API_KEY` |
 
 ### Sentiment
 
@@ -89,8 +89,8 @@ SentimentAnalystAgent ←── SentimentProvider (claude | keyword)
 - **LangGraph** — multi-agent orchestration via state graph
 - **Anthropic Claude API** or **Ollama** (local) — two-tier LLM routing via `LLMClientFactory`: quick model for cheap tasks, deep model for reasoning; switch with `LLM_PROVIDER=ollama`
 - **Alpaca Markets API** — paper trading execution
-- **RSS / Benzinga / Polygon.io** — news ingestion (switchable)
-- **yfinance / Polygon.io** — market data (switchable)
+- **RSS / Benzinga / Massive.com** — news ingestion (switchable)
+- **yfinance / Massive.com** — market data (switchable)
 - **Redis** — inter-agent event bus (pub/sub)
 - **SQLite + SQLAlchemy + Alembic** — trade logging, signal history, and versioned schema migrations
 - **Pydantic v2** — data validation across all agent boundaries
@@ -125,7 +125,7 @@ SENTIMENT_PROVIDER=claude
 
 # Premium stack
 NEWS_PROVIDER=benzinga
-MARKET_DATA_PROVIDER=polygon_paid
+MARKET_DATA_PROVIDER=massive_paid
 SENTIMENT_PROVIDER=claude
 ```
 
@@ -220,8 +220,8 @@ src/news_trade/
 │   │   └── benzinga.py    # Benzinga API (premium)
 │   ├── market/
 │   │   ├── yfinance.py    # yfinance library (free)
-│   │   ├── polygon_free.py # Polygon.io free tier
-│   │   └── polygon_paid.py # Polygon.io Starter+ (premium)
+│   │   ├── massive_free.py # Massive.com free tier
+│   │   └── massive_paid.py # Massive.com Starter+ (premium)
 │   ├── sentiment/
 │   │   ├── claude.py      # Claude API with daily budget cap
 │   │   └── keyword.py     # Keyword heuristic fallback (free)

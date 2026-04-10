@@ -18,8 +18,8 @@ class NewsProviderType(StrEnum):
 
 class MarketDataProviderType(StrEnum):
     YFINANCE = "yfinance"
-    POLYGON_FREE = "polygon_free"
-    POLYGON_PAID = "polygon_paid"
+    MASSIVE_FREE = "massive_free"
+    MASSIVE_PAID = "massive_paid"
     ALPACA = "alpaca"
     FINNHUB = "finnhub"
 
@@ -74,7 +74,7 @@ class Settings(BaseSettings):
 
     # --- News provider (legacy field kept for backwards compat) ---
     benzinga_api_key: str = Field(default="", description="Benzinga API key")
-    polygon_api_key: str = Field(default="", description="Polygon.io API key")
+    massive_api_key: str = Field(default="", description="Massive.com API key")
 
     # --- Financial Modeling Prep (earnings calendar + estimates) ---
     fmp_api_key: str = Field(default="", description="Financial Modeling Prep API key")
@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     market_data_provider: MarketDataProviderType = Field(
         default=MarketDataProviderType.YFINANCE,
         description=(
-            "Market data source: yfinance, polygon_free, polygon_paid, or alpaca"
+            "Market data source: yfinance, massive_free, massive_paid, or alpaca"
         ),
     )
     sentiment_provider: SentimentProviderType = Field(

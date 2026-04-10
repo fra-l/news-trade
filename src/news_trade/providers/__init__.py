@@ -48,16 +48,16 @@ def get_market_data_provider(settings: Settings | None = None) -> MarketDataProv
         case MarketDataProviderType.YFINANCE:
             from news_trade.providers.market.yfinance import YFinanceMarketProvider
             return YFinanceMarketProvider()
-        case MarketDataProviderType.POLYGON_FREE:
-            from news_trade.providers.market.polygon_free import (
-                PolygonFreeMarketProvider,
+        case MarketDataProviderType.MASSIVE_FREE:
+            from news_trade.providers.market.massive_free import (
+                MassiveFreeMarketProvider,
             )
-            return PolygonFreeMarketProvider(api_key=cfg.polygon_api_key)
-        case MarketDataProviderType.POLYGON_PAID:
-            from news_trade.providers.market.polygon_paid import (
-                PolygonPaidMarketProvider,
+            return MassiveFreeMarketProvider(api_key=cfg.massive_api_key)
+        case MarketDataProviderType.MASSIVE_PAID:
+            from news_trade.providers.market.massive_paid import (
+                MassivePaidMarketProvider,
             )
-            return PolygonPaidMarketProvider(api_key=cfg.polygon_api_key)
+            return MassivePaidMarketProvider(api_key=cfg.massive_api_key)
         case MarketDataProviderType.FINNHUB:
             from news_trade.providers.market.finnhub import FinnhubMarketDataProvider
             return FinnhubMarketDataProvider(api_key=cfg.finnhub_api_key)

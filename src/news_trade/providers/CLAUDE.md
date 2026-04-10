@@ -53,8 +53,8 @@ All provider methods are `async`. Test mocks implement only the methods the test
 | News | `news/rss.py` | `RSSNewsProvider` | Free | — |
 | News | `news/benzinga.py` | `BenzingaNewsProvider` | Premium | `BENZINGA_API_KEY` |
 | Market | `market/yfinance.py` | `YFinanceMarketProvider` | Free | — |
-| Market | `market/polygon_free.py` | `PolygonFreeMarketProvider` | Free tier | `POLYGON_API_KEY` |
-| Market | `market/polygon_paid.py` | `PolygonPaidMarketProvider` | Starter+ | `POLYGON_API_KEY` |
+| Market | `market/massive_free.py` | `MassiveFreeMarketProvider` | Free tier | `MASSIVE_API_KEY` |
+| Market | `market/massive_paid.py` | `MassivePaidMarketProvider` | Starter+ | `MASSIVE_API_KEY` |
 | Market | `market/finnhub.py` | `FinnhubMarketDataProvider` | Free | `FINNHUB_API_KEY` |
 | Sentiment | `sentiment/claude.py` | `ClaudeSentimentProvider` | Paid | `ANTHROPIC_API_KEY` |
 | Sentiment | `sentiment/keyword.py` | `KeywordSentimentProvider` | Free | — |
@@ -87,7 +87,7 @@ Enforces a daily budget cap (`settings.claude_daily_budget_usd`); returns a neut
 
 ```python
 get_news_provider(settings)         # → RSSNewsProvider | BenzingaNewsProvider
-get_market_data_provider(settings)  # → YFinance | PolygonFree | PolygonPaid
+get_market_data_provider(settings)  # → YFinance | MassiveFree | MassivePaid
 get_sentiment_provider(settings)    # → ClaudeSentimentProvider | KeywordSentimentProvider
 get_calendar_provider(settings)     # → FinnhubCalendarProvider (if FINNHUB_API_KEY) | FMPCalendarProvider (if FMP_API_KEY) | YFinanceCalendarProvider
 get_estimates_provider(settings)    # → FMPEstimatesProvider (if FMP_API_KEY) | None

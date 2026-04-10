@@ -26,7 +26,7 @@ flowchart TD
     • Extracts unique tickers from events
     • Fetches OHLCV bars + volatility
       via MarketDataProvider
-      (yfinance / Polygon)
+      (yfinance / Massive)
     • Graceful degradation on failure
     ─────────────────────
     Out → market_context{ticker→MarketSnapshot}"]

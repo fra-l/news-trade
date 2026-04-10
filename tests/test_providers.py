@@ -70,14 +70,14 @@ class TestProtocolCompliance:
         p = YFinanceMarketProvider()
         assert isinstance(p, MarketDataProvider)
 
-    def test_polygon_free_is_market_provider(self):
-        from news_trade.providers.market.polygon_free import PolygonFreeMarketProvider
-        p = PolygonFreeMarketProvider(api_key="key")
+    def test_massive_free_is_market_provider(self):
+        from news_trade.providers.market.massive_free import MassiveFreeMarketProvider
+        p = MassiveFreeMarketProvider(api_key="key")
         assert isinstance(p, MarketDataProvider)
 
-    def test_polygon_paid_is_market_provider(self):
-        from news_trade.providers.market.polygon_paid import PolygonPaidMarketProvider
-        p = PolygonPaidMarketProvider(api_key="key")
+    def test_massive_paid_is_market_provider(self):
+        from news_trade.providers.market.massive_paid import MassivePaidMarketProvider
+        p = MassivePaidMarketProvider(api_key="key")
         assert isinstance(p, MarketDataProvider)
 
     def test_keyword_is_sentiment_provider(self):
@@ -109,15 +109,15 @@ class TestGetMarketDataProvider:
         p = get_market_data_provider(s)
         assert p.name == "yfinance"
 
-    def test_polygon_free_returns_polygon_free_provider(self):
-        s = _make_settings(market_data_provider=MarketDataProviderType.POLYGON_FREE)
+    def test_massive_free_returns_massive_free_provider(self):
+        s = _make_settings(market_data_provider=MarketDataProviderType.MASSIVE_FREE)
         p = get_market_data_provider(s)
-        assert p.name == "polygon_free"
+        assert p.name == "massive_free"
 
-    def test_polygon_paid_returns_polygon_paid_provider(self):
-        s = _make_settings(market_data_provider=MarketDataProviderType.POLYGON_PAID)
+    def test_massive_paid_returns_massive_paid_provider(self):
+        s = _make_settings(market_data_provider=MarketDataProviderType.MASSIVE_PAID)
         p = get_market_data_provider(s)
-        assert p.name == "polygon_paid"
+        assert p.name == "massive_paid"
 
 
 class TestGetSentimentProvider:

@@ -25,7 +25,7 @@ reads from and writes to a shared `PipelineState` TypedDict.
 | Agent orchestration | LangGraph |
 | LLM / Sentiment | Anthropic Claude API (`anthropic`) or Ollama local models (`openai` SDK compat) |
 | Broker | Alpaca Markets (`alpaca-py`) |
-| Data Sources | RSS feeds, Benzinga, yfinance, Polygon.io |
+| Data Sources | RSS feeds, Benzinga, yfinance, Massive.com |
 | Event Bus | Redis async pub/sub |
 | Operator interface | Telegram Bot (`python-telegram-bot` v20+) |
 | Database | SQLite (default) via SQLAlchemy ORM + **Alembic** migrations |
@@ -73,7 +73,7 @@ src/news_trade/
 │   ├── base.py            # NewsProvider, MarketDataProvider, SentimentProvider Protocols
 │   ├── __init__.py        # Factory functions: get_*_provider(settings)
 │   ├── news/              # RSSNewsProvider, BenzingaNewsProvider
-│   ├── market/            # YFinance, PolygonFree, PolygonPaid
+│   ├── market/            # YFinance, MassiveFree, MassivePaid
 │   ├── sentiment/         # ClaudeSentimentProvider (budget-capped), KeywordSentimentProvider
 │   └── calendar/          # FMPCalendarProvider (primary), YFinanceCalendarProvider (fallback)
 ├── services/              # Business logic + persistence → see services/CLAUDE.md
@@ -147,7 +147,7 @@ to `.env` before running.
 | `ANTHROPIC_API_KEY` | — | Required for Claude sentiment |
 | `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | — | Broker credentials |
 | `BENZINGA_API_KEY` | — | Premium news (optional) |
-| `POLYGON_API_KEY` | — | Premium market data (optional) |
+| `MASSIVE_API_KEY` | — | Premium market data (optional) |
 | `FINNHUB_API_KEY` | — | Finnhub earnings calendar — preferred; free tier supports broad market scan |
 | `FMP_API_KEY` | — | FMP earnings calendar (fallback) + historical EPS beat rates; falls back to yfinance when absent |
 | `REDIS_URL` | `redis://localhost:6379/0` | Event bus |
@@ -155,7 +155,7 @@ to `.env` before running.
 | `SMALL_CAP_MAX_MARKET_CAP_USD` | `2000000000` | Market-cap ceiling (USD) for small-cap filter at startup |
 | `MAX_STARTUP_TICKERS` | `5` | Max tickers selected at startup (-1 = unlimited) |
 | `NEWS_PROVIDER` | `rss` | `rss` or `benzinga` |
-| `MARKET_DATA_PROVIDER` | `yfinance` | `yfinance`, `polygon_free`, `polygon_paid`, `finnhub` |
+| `MARKET_DATA_PROVIDER` | `yfinance` | `yfinance`, `massive_free`, `massive_paid`, `finnhub` |
 | `SENTIMENT_PROVIDER` | `claude` | `claude` or `keyword` |
 | `LLM_PROVIDER` | `anthropic` | LLM backend: `anthropic` or `ollama` |
 | `LLM_QUICK_MODEL` | `claude-haiku-4-5-20251001` | Quick model (e.g. `llama3.2:3b` for Ollama) |
