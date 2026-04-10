@@ -63,7 +63,7 @@ class NewsEvent(BaseModel):
     event_id: str = Field(description="Unique identifier from the news provider")
     headline: str = Field(description="News headline text")
     summary: str = Field(default="", description="Article summary or first paragraph")
-    source: str = Field(description="News provider name (e.g. 'benzinga', 'polygon')")
+    source: str = Field(description="News provider name (e.g. 'benzinga', 'massive')")
     url: str = Field(default="", description="Link to the full article")
     tickers: list[str] = Field(
         default_factory=list,

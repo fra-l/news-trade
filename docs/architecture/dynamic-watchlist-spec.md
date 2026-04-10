@@ -160,7 +160,7 @@ column (or expandable detail) in the CLI:
 |---|---|
 | Sector / industry | yfinance `Ticker.info` |
 | 52-week return | `MarketDataProvider` |
-| Analyst consensus | yfinance or Polygon |
+| Analyst consensus | yfinance or Massive |
 | Historical beat rate | `Stage1Repository.load_historical_outcomes()` |
 | Avg EPS surprise % | `FMPEstimatesProvider` |
 

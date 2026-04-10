@@ -1,6 +1,6 @@
-"""PolygonFreeMarketProvider — Polygon.io free-tier market data.
+"""MassiveFreeMarketProvider — Massive.com free-tier market data.
 
-Phase 1 free-tier.  Requires a free Polygon.io API key (no subscription).
+Phase 1 free-tier.  Requires a free Massive.com API key (no subscription).
 Rate-limited to 5 API calls / minute on the free tier.
 """
 
@@ -15,21 +15,21 @@ import httpx
 from news_trade.models.market import MarketSnapshot, OHLCVBar
 
 _logger = logging.getLogger(__name__)
-_AGGS_URL = "https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{from_}/{to}"
+_AGGS_URL = "https://api.massive.com/v2/aggs/ticker/{ticker}/range/1/day/{from_}/{to}"
 
 
-class PolygonFreeMarketProvider:
-    """Fetches OHLCV bars from Polygon.io using the free-tier aggregates endpoint."""
+class MassiveFreeMarketProvider:
+    """Fetches OHLCV bars from Massive.com using the free-tier aggregates endpoint."""
 
     def __init__(self, api_key: str = "") -> None:
         self._api_key = api_key
 
     @property
     def name(self) -> str:
-        return "polygon_free"
+        return "massive_free"
 
     async def get_snapshot(self, ticker: str) -> MarketSnapshot:
-        """Fetch 30 daily bars from Polygon and compute volatility metrics."""
+        """Fetch 30 daily bars from Massive and compute volatility metrics."""
         today = datetime.now(UTC).date()
         from_ = (today - timedelta(days=45)).isoformat()
         to = today.isoformat()
@@ -49,7 +49,7 @@ class PolygonFreeMarketProvider:
 
         results = data.get("results") or []
         if not results:
-            raise ValueError(f"Polygon returned no data for {ticker}")
+            raise ValueError(f"Massive returned no data for {ticker}")
 
         bars: list[OHLCVBar] = []
         for r in results:
@@ -89,7 +89,7 @@ class PolygonFreeMarketProvider:
             try:
                 results[ticker] = await self.get_snapshot(ticker)
             except Exception as exc:
-                _logger.warning("Polygon free snapshot failed for %s: %s", ticker, exc)
+                _logger.warning("Massive free snapshot failed for %s: %s", ticker, exc)
         return results
 
 

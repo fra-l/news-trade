@@ -153,6 +153,6 @@ def test_serialization_round_trip(self) -> None:
 - Real Anthropic API calls (`ANTHROPIC_API_KEY` not set in test env)
 - Real Alpaca API calls
 - Real Redis connections
-- Real HTTP requests to FMP, Benzinga, yfinance, or Polygon
+- Real HTTP requests to FMP, Benzinga, yfinance, or Massive
 - File-system SQLite databases (always use `sqlite:///:memory:`)
 - `time.sleep()` — use `AsyncMock` and control timing explicitly

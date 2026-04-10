@@ -1,6 +1,6 @@
-"""PolygonPaidMarketProvider — Polygon.io Starter+ (premium) market data.
+"""MassivePaidMarketProvider — Massive.com Starter+ (premium) market data.
 
-Phase 2 premium.  Requires a Polygon.io Starter or higher subscription.
+Phase 2 premium.  Requires a Massive.com Starter or higher subscription.
 Unlocks higher rate limits, real-time data, and more history.
 """
 
@@ -15,11 +15,11 @@ import httpx
 from news_trade.models.market import MarketSnapshot, OHLCVBar
 
 _logger = logging.getLogger(__name__)
-_AGGS_URL = "https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{from_}/{to}"
+_AGGS_URL = "https://api.massive.com/v2/aggs/ticker/{ticker}/range/1/day/{from_}/{to}"
 
 
-class PolygonPaidMarketProvider:
-    """Fetches OHLCV bars from Polygon.io using a paid-tier API key.
+class MassivePaidMarketProvider:
+    """Fetches OHLCV bars from Massive.com using a paid-tier API key.
 
     Identical implementation to the free-tier provider but uses a separate
     configuration key to make the billing tier explicit in settings.
@@ -30,7 +30,7 @@ class PolygonPaidMarketProvider:
 
     @property
     def name(self) -> str:
-        return "polygon_paid"
+        return "massive_paid"
 
     async def get_snapshot(self, ticker: str) -> MarketSnapshot:
         today = datetime.now(UTC).date()
@@ -52,7 +52,7 @@ class PolygonPaidMarketProvider:
 
         results = data.get("results") or []
         if not results:
-            raise ValueError(f"Polygon returned no data for {ticker}")
+            raise ValueError(f"Massive returned no data for {ticker}")
 
         bars: list[OHLCVBar] = []
         for r in results:
@@ -99,5 +99,5 @@ class PolygonPaidMarketProvider:
             try:
                 results[ticker] = await self.get_snapshot(ticker)
             except Exception as exc:
-                _logger.warning("Polygon paid snapshot failed for %s: %s", ticker, exc)
+                _logger.warning("Massive paid snapshot failed for %s: %s", ticker, exc)
         return results
