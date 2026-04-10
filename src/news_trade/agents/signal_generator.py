@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from math import exp, log
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -48,6 +49,11 @@ _EARN_POST_FRESH_SIZE_FACTOR = 0.75
 _REPORT_DATE_RE = re.compile(r"\bon (\d{4}-\d{2}-\d{2})\b")
 # Regex to extract fiscal quarter from EarningsCalendarAgent headline.
 _FISCAL_QTR_RE = re.compile(r"report\s+(Q\d\s+\d{4})\s+on\b")
+# Direction label sets used by the per-ticker decay-weighted aggregation.
+_BULLISH_LABELS = frozenset({SentimentLabel.BULLISH, SentimentLabel.VERY_BULLISH})
+_BEARISH_LABELS = frozenset({SentimentLabel.BEARISH, SentimentLabel.VERY_BEARISH})
+# Minority direction weight fraction above which a ticker group is considered MIXED.
+_MIXED_DIRECTION_THRESHOLD = 0.25
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +159,11 @@ class SignalGeneratorAgent(BaseAgent):
         self._stage1_repo = stage1_repo
 
     async def run(self, state: dict) -> dict:  # type: ignore[type-arg]
-        """Generate trade signals from sentiment results and market context.
+        """Generate trade signals — at most one per ticker per cycle.
+
+        Groups sentiment_results by ticker, applies decay-weighted aggregation
+        to produce a single synthetic SentimentResult per ticker, then calls
+        _build_signal() and optionally _debate_signal() as before.
 
         Returns:
             ``{"trade_signals": [TradeSignal, ...]}``
@@ -166,19 +176,38 @@ class SignalGeneratorAgent(BaseAgent):
         # Build event lookup so _build_signal can access event_type and source.
         event_lookup: dict[str, NewsEvent] = {e.event_id: e for e in news_events}
 
+        # Group by ticker so we produce at most one signal per ticker per cycle.
+        groups: dict[str, list[SentimentResult]] = {}
+        for sr in sentiment_results:
+            groups.setdefault(sr.ticker, []).append(sr)
+
+        now = datetime.now(UTC)
         trade_signals: list[TradeSignal] = []
-        for sentiment in sentiment_results:
-            market_ctx = market_context.get(sentiment.ticker)
+
+        for ticker, group in groups.items():
+            market_ctx = market_context.get(ticker)
             if market_ctx is None:
                 self.logger.warning(
-                    "No market context for ticker %s — skipping signal",
-                    sentiment.ticker,
+                    "No market context for ticker %s — skipping signal", ticker
                 )
                 continue
 
-            signal = self._build_signal(
-                sentiment, market_ctx, event_lookup, estimates
+            agg = _aggregate_ticker_group(
+                ticker,
+                group,
+                event_lookup,
+                self.settings.article_decay_halflife_hours,
+                now,
             )
+            if agg is None:
+                self.logger.info(
+                    "Signal: %-6s  %d article(s) → MIXED or all-neutral, no signal",
+                    ticker,
+                    len(group),
+                )
+                continue
+
+            signal = self._build_signal(agg, market_ctx, event_lookup, estimates)
             if signal is None:
                 continue
 
@@ -186,13 +215,14 @@ class SignalGeneratorAgent(BaseAgent):
             _ev_type = _ev.event_type.value if _ev else "unknown"
             self.logger.info(
                 "Signal: %-6s  type=%-20s  direction=%-6s  conviction=%.3f  "
-                "conf_score=%.3f  gate=%s%s",
+                "conf_score=%.3f  gate=%s  articles=%d%s",
                 signal.ticker,
                 _ev_type,
                 signal.direction.value,
                 signal.conviction,
                 signal.confidence_score or 0.0,
                 "PASS" if signal.passed_confidence_gate else "FAIL",
+                len(group),
                 (
                     f"  reason={signal.rejection_reason!r}"
                     if not signal.passed_confidence_gate
@@ -247,7 +277,8 @@ class SignalGeneratorAgent(BaseAgent):
             case _:
                 self.logger.info(
                     "Signal: %s  label=%s → NEUTRAL, no signal",
-                    sentiment.ticker, sentiment.label.value,
+                    sentiment.ticker,
+                    sentiment.label.value,
                 )
                 return None
 
@@ -255,7 +286,9 @@ class SignalGeneratorAgent(BaseAgent):
         if conviction < self.settings.min_signal_conviction:
             self.logger.info(
                 "Signal: %s  conviction=%.3f < threshold=%.3f → skipped",
-                sentiment.ticker, conviction, self.settings.min_signal_conviction,
+                sentiment.ticker,
+                conviction,
+                self.settings.min_signal_conviction,
             )
             return None
 
@@ -335,20 +368,27 @@ class SignalGeneratorAgent(BaseAgent):
                 self.logger.info(
                     "EARN_PRE %s: using FMP historical beat_rate=%.2f "
                     "(observed sample too small: %d quarters)",
-                    ticker, beat_rate, outcomes.sample_size,
+                    ticker,
+                    beat_rate,
+                    outcomes.sample_size,
                 )
             else:
                 beat_rate = self.settings.earn_default_beat_rate
                 self.logger.info(
                     "EARN_PRE %s: insufficient observed history (%d samples), "
                     "no FMP data — using default beat_rate=%.2f",
-                    ticker, outcomes.sample_size, beat_rate,
+                    ticker,
+                    outcomes.sample_size,
+                    beat_rate,
                 )
 
         if beat_rate < _BEAT_RATE_MIN or beat_rate > _BEAT_RATE_MAX:
             self.logger.info(
                 "EARN_PRE %s: beat_rate=%.2f outside [%.2f, %.2f] — skipping",
-                ticker, beat_rate, _BEAT_RATE_MIN, _BEAT_RATE_MAX,
+                ticker,
+                beat_rate,
+                _BEAT_RATE_MIN,
+                _BEAT_RATE_MAX,
             )
             return None
 
@@ -394,7 +434,12 @@ class SignalGeneratorAgent(BaseAgent):
         self.logger.info(
             "EARN_PRE %s: persisted Stage1 id=%s direction=%s size_pct=%.2f "
             "beat_rate=%.2f report=%s",
-            ticker, position.id, direction.value, size_pct, beat_rate, report_date,
+            ticker,
+            position.id,
+            direction.value,
+            size_pct,
+            beat_rate,
+            report_date,
         )
 
         conviction = abs(sentiment.score) * sentiment.confidence
@@ -458,22 +503,27 @@ class SignalGeneratorAgent(BaseAgent):
                 remaining_pct = 1.0 - open_pos.size_pct
                 self.logger.info(
                     "%s %s: Stage1 CONFIRMED — adding %.0f%% to existing %s",
-                    event_type.value.upper(), ticker,
-                    remaining_pct * 100, open_pos.direction,
+                    event_type.value.upper(),
+                    ticker,
+                    remaining_pct * 100,
+                    open_pos.direction,
                 )
                 self._stage1_repo.update_status(open_pos.id, Stage1Status.CONFIRMED)
             else:
                 # Existing position is in the wrong direction — reverse it.
                 self.logger.info(
                     "%s %s: Stage1 REVERSED — closing %s, opening %s",
-                    event_type.value.upper(), ticker,
-                    open_pos.direction, direction.value,
+                    event_type.value.upper(),
+                    ticker,
+                    open_pos.direction,
+                    direction.value,
                 )
                 self._stage1_repo.update_status(open_pos.id, Stage1Status.REVERSED)
         else:
             self.logger.info(
                 "%s %s: no open Stage1 position — fresh PEAD entry",
-                event_type.value.upper(), ticker,
+                event_type.value.upper(),
+                ticker,
             )
 
         conviction = abs(sentiment.score) * sentiment.confidence
@@ -534,7 +584,8 @@ class SignalGeneratorAgent(BaseAgent):
         self._stage1_repo.update_status(open_pos.id, Stage1Status.EXITED)
         self.logger.info(
             "EARN_MIXED %s: Stage1 id=%s EXITED — emitting CLOSE signal",
-            ticker, open_pos.id,
+            ticker,
+            open_pos.id,
         )
         return TradeSignal(
             signal_id=str(uuid4()),
@@ -619,9 +670,7 @@ class SignalGeneratorAgent(BaseAgent):
                 )
             )
             self.logger.info(
-                "Debate: %s  round=%d/%d\n"
-                "  BULL: %s\n"
-                "  BEAR: %s",
+                "Debate: %s  round=%d/%d\n  BULL: %s\n  BEAR: %s",
                 signal.ticker,
                 round_n + 1,
                 self.settings.signal_debate_rounds,
@@ -664,6 +713,103 @@ class SignalGeneratorAgent(BaseAgent):
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+
+def _decay_weight(
+    published_at: datetime | None,
+    now: datetime,
+    halflife_hours: float,
+) -> float:
+    """Exponential time-decay weight: 1.0 for a brand-new article, approaching 0
+    for very old ones.  Half-life is set via ``article_decay_halflife_hours``.
+
+    Handles both naive datetimes (treated as UTC) and timezone-aware datetimes.
+    Returns 1.0 when ``published_at`` is None (no discount applied).
+    """
+    if published_at is None:
+        return 1.0
+    # Normalise to UTC-aware for safe subtraction.
+    if published_at.tzinfo is None:
+        published_at = published_at.replace(tzinfo=UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    age_hours = max(0.0, (now - published_at).total_seconds() / 3600)
+    return exp(-log(2) / halflife_hours * age_hours)
+
+
+def _aggregate_ticker_group(
+    ticker: str,
+    group: list[SentimentResult],
+    event_lookup: dict[str, NewsEvent],
+    halflife_hours: float,
+    now: datetime,
+) -> SentimentResult | None:
+    """Aggregate N SentimentResults for one ticker into a single representative result.
+
+    Weight per article = confidence * decay(age).  Returns None when:
+    - All articles are NEUTRAL (no directional weight).
+    - Both bullish and bearish camps each exceed ``_MIXED_DIRECTION_THRESHOLD``
+      of the total directional weight (conflicting signals → skip).
+
+    The representative ``event_id`` is taken from the highest-weight article so
+    that a fresh EARN_PRE event naturally wins over stale generic news and
+    ``_build_signal()`` dispatches to the correct handler.
+    """
+    weights: list[float] = []
+    for sr in group:
+        event = event_lookup.get(sr.event_id)
+        pub_at = event.published_at if event is not None else None
+        weights.append(sr.confidence * _decay_weight(pub_at, now, halflife_hours))
+
+    total_weight = sum(weights)
+    if total_weight == 0.0:
+        return None
+
+    pairs = list(zip(group, weights, strict=True))
+    bullish_w = sum(w for sr, w in pairs if sr.label in _BULLISH_LABELS)
+    bearish_w = sum(w for sr, w in pairs if sr.label in _BEARISH_LABELS)
+    directional_w = bullish_w + bearish_w
+
+    if directional_w == 0.0:
+        return None  # all neutral
+
+    if (
+        bullish_w > 0.0
+        and bearish_w > 0.0
+        and min(bullish_w, bearish_w) / directional_w > _MIXED_DIRECTION_THRESHOLD
+    ):
+        return None  # conflicting directions above noise floor
+
+    score_agg = sum(sr.score * w for sr, w in pairs) / total_weight
+    confidence_agg = sum(sr.confidence for sr in group) / len(group)
+
+    if score_agg >= 0.8:
+        label = SentimentLabel.VERY_BULLISH
+    elif score_agg >= 0.1:
+        label = SentimentLabel.BULLISH
+    elif score_agg <= -0.8:
+        label = SentimentLabel.VERY_BEARISH
+    elif score_agg <= -0.1:
+        label = SentimentLabel.BEARISH
+    else:
+        label = SentimentLabel.NEUTRAL
+
+    best_idx = max(range(len(group)), key=lambda i: weights[i])
+    best = group[best_idx]
+
+    return SentimentResult(
+        event_id=best.event_id,
+        ticker=ticker,
+        label=label,
+        score=round(score_agg, 6),
+        confidence=round(confidence_agg, 6),
+        reasoning=(
+            f"Aggregated {len(group)} article(s) "
+            f"(decay halflife={halflife_hours:.0f}h): {best.reasoning}"
+        ),
+        model_id=best.model_id,
+        provider=best.provider,
+    )
 
 
 def _parse_calendar_fields(

@@ -154,11 +154,13 @@ Accepts `llm: LLMClientFactory` and `scorer: ConfidenceScorer` at construction t
 
 | Method | Purpose |
 |---|---|
-| `run(state)` | Iterates `sentiment_results`, pairs with `market_context`, builds `event_lookup` dict from `news_events`, calls `_build_signal()`, then `_debate_signal()` for gate-passed signals |
+| `run(state)` | Groups `sentiment_results` by ticker; applies `_aggregate_ticker_group()` to produce at most one decay-weighted `SentimentResult` per ticker (MIXED or all-neutral → skip); calls `_build_signal()` once per ticker; then `_debate_signal()` for gate-passed signals |
 | `_build_signal(sentiment, market_ctx, event_lookup)` | Maps label → direction; computes conviction; applies `min_signal_conviction` threshold; calls `scorer.score()` + `scorer.apply_gate()` to set `confidence_score` and `passed_confidence_gate`; returns `TradeSignal` or `None` |
 | `_compute_position_size(ticker, conviction, volatility)` | Volatility-adjusted heuristic: `max(1, int(conviction / max(vol, 0.01) * 10))` |
 | `_compute_stop_loss(entry, volatility, direction)` | 2× daily vol proxy offset from entry; LONG → below, SHORT → above |
 | `_debate_signal(signal)` | Bull/bear debate gate — skips if `signal_debate_rounds=0` or below `signal_debate_threshold`; applies CONFIRM/REDUCE/REJECT verdict |
+
+**Decay-weighted aggregation (fix: multiple orders per ticker)** — `_aggregate_ticker_group(ticker, group, event_lookup, halflife_hours, now)` (module-level) collapses N articles for the same ticker into one `SentimentResult`. Weight per article = `confidence × exp(-ln2 / halflife × age_hours)`. Returns `None` when all-neutral or when both bullish and bearish each exceed 25% of total directional weight (MIXED). The representative `event_id` — used by `_build_signal()` to dispatch to the correct EARN_* handler — is the highest-weight (most recent × high-confidence) article. `_decay_weight(published_at, now, halflife_hours)` (module-level) handles both naive (treated as UTC) and timezone-aware datetimes; `None` returns 1.0.
 
 Prompt helpers are module-level functions: `_build_bull_prompt`, `_build_bear_prompt`,
 `_build_synthesis_prompt`. The synthesis uses `response_schema=_DebateVerdictSchema`

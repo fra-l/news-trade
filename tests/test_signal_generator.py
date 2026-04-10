@@ -11,6 +11,8 @@ import pytest
 
 from news_trade.agents.signal_generator import (
     SignalGeneratorAgent,
+    _aggregate_ticker_group,
+    _decay_weight,
     _parse_calendar_fields,
 )
 from news_trade.config import Settings
@@ -98,7 +100,10 @@ def _make_agent(settings: Settings | None = None) -> SignalGeneratorAgent:
     scorer = ConfidenceScorer(settings=s)
     stage1_repo = MagicMock()
     return SignalGeneratorAgent(
-        settings=s, event_bus=event_bus, llm=llm_factory, scorer=scorer,
+        settings=s,
+        event_bus=event_bus,
+        llm=llm_factory,
+        scorer=scorer,
         stage1_repo=stage1_repo,
     )
 
@@ -140,7 +145,9 @@ class TestBuildSignal:
 
     def test_very_bearish_produces_short(self):
         sentiment = _make_sentiment(
-            label=SentimentLabel.VERY_BEARISH, score=-0.90, confidence=0.90,
+            label=SentimentLabel.VERY_BEARISH,
+            score=-0.90,
+            confidence=0.90,
         )
         signal = self.agent._build_signal(sentiment, _make_market(), {}, {})
         assert signal is not None
@@ -353,7 +360,10 @@ def _make_agent_with_llm(
     scorer = ConfidenceScorer(settings=settings)
     stage1_repo = MagicMock()
     return SignalGeneratorAgent(
-        settings=settings, event_bus=event_bus, llm=llm_factory, scorer=scorer,
+        settings=settings,
+        event_bus=event_bus,
+        llm=llm_factory,
+        scorer=scorer,
         stage1_repo=stage1_repo,
     )
 
@@ -500,7 +510,10 @@ def _make_earn_agent(
     stage1_repo.load_historical_outcomes.return_value = outcomes
     stage1_repo.load_open.return_value = None
     return SignalGeneratorAgent(
-        settings=s, event_bus=event_bus, llm=llm_factory, scorer=scorer,
+        settings=s,
+        event_bus=event_bus,
+        llm=llm_factory,
+        scorer=scorer,
         stage1_repo=stage1_repo,
     )
 
@@ -514,8 +527,10 @@ class TestHandleEarnPre:
     def setup_method(self) -> None:
         self.agent = _make_earn_agent(beat_rate=0.72)
         self.sentiment = _make_sentiment(
-            event_id="earn-evt-1", label=SentimentLabel.BULLISH,
-            score=0.80, confidence=0.90,
+            event_id="earn-evt-1",
+            label=SentimentLabel.BULLISH,
+            score=0.80,
+            confidence=0.90,
         )
         self.market = _make_market(latest_close=200.0, volatility_20d=0.20)
         self.event = _make_earn_event(event_type=EventType.EARN_PRE)
@@ -523,39 +538,49 @@ class TestHandleEarnPre:
 
     def test_earn_pre_produces_long_for_high_beat_rate(self):
         signal = self.agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, self.estimates,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            self.estimates,
         )
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
 
     def test_earn_pre_sets_stage1_id(self):
         signal = self.agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, self.estimates,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            self.estimates,
         )
         assert signal is not None
         assert signal.stage1_id is not None
 
     def test_earn_pre_has_no_horizon_days(self):
         signal = self.agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, self.estimates,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            self.estimates,
         )
         assert signal is not None
         assert signal.horizon_days is None
 
     def test_earn_pre_persists_position(self):
         self.agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, self.estimates,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            self.estimates,
         )
         self.agent._stage1_repo.persist.assert_called_once()
 
     def test_earn_pre_stop_loss_below_entry_for_long(self):
         signal = self.agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, self.estimates,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            self.estimates,
         )
         assert signal is not None
         # 4% stop: 200 * (1 - 0.04) = 192
@@ -565,24 +590,30 @@ class TestHandleEarnPre:
     def test_earn_pre_skip_when_beat_rate_below_min(self):
         agent = _make_earn_agent(beat_rate=0.50)
         signal = agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, self.estimates,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            self.estimates,
         )
         assert signal is None
 
     def test_earn_pre_skip_when_beat_rate_above_max(self):
         agent = _make_earn_agent(beat_rate=0.90)
         signal = agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, self.estimates,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            self.estimates,
         )
         assert signal is None
 
     def test_earn_pre_short_for_low_beat_rate(self):
         agent = _make_earn_agent(beat_rate=0.57)
         signal = agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, self.estimates,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            self.estimates,
         )
         assert signal is not None
         assert signal.direction == SignalDirection.SHORT
@@ -590,8 +621,10 @@ class TestHandleEarnPre:
     def test_earn_pre_uses_default_beat_rate_when_fmp_source(self):
         agent = _make_earn_agent(beat_rate=0.65, source="fmp")
         signal = agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, self.estimates,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            self.estimates,
         )
         # default beat_rate=0.65 >= 0.60 → LONG, within [0.55, 0.85] → signal emitted
         assert signal is not None
@@ -610,8 +643,10 @@ class TestHandleEarnPre:
             "AAPL": _make_estimates().model_copy(update={"historical_beat_rate": 0.75})
         }
         signal = agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, estimates_with_rate,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            estimates_with_rate,
         )
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
@@ -623,8 +658,10 @@ class TestHandleEarnPre:
             update={"earn_default_beat_rate": 0.65}
         )
         signal = agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, {},  # empty estimates
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            {},  # empty estimates
         )
         # 0.65 → LONG
         assert signal is not None
@@ -640,8 +677,10 @@ class TestHandleEarnPre:
             "AAPL": _make_estimates()  # historical_beat_rate defaults to None
         }
         signal = agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, estimates_no_rate,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            estimates_no_rate,
         )
         # 0.57 is in [0.55, 0.85] but < 0.60 → SHORT
         assert signal is not None
@@ -655,8 +694,10 @@ class TestHandleEarnPre:
             "AAPL": _make_estimates().model_copy(update={"historical_beat_rate": 0.75})
         }
         signal = agent._build_signal(
-            self.sentiment, self.market,
-            {"earn-evt-1": self.event}, estimates_with_rate,
+            self.sentiment,
+            self.market,
+            {"earn-evt-1": self.event},
+            estimates_with_rate,
         )
         assert signal is not None
         assert signal.direction == SignalDirection.SHORT
@@ -671,8 +712,10 @@ class TestHandleEarnPost:
     def setup_method(self) -> None:
         self.market = _make_market(latest_close=210.0, volatility_20d=0.20)
         self.sentiment = _make_sentiment(
-            event_id="earn-beat-1", label=SentimentLabel.VERY_BULLISH,
-            score=0.90, confidence=0.92,
+            event_id="earn-beat-1",
+            label=SentimentLabel.VERY_BULLISH,
+            score=0.90,
+            confidence=0.92,
         )
 
     def _beat_agent(
@@ -689,7 +732,10 @@ class TestHandleEarnPost:
         stage1_repo = MagicMock()
         stage1_repo.load_open.return_value = open_pos
         return SignalGeneratorAgent(
-            settings=s, event_bus=event_bus, llm=llm_factory, scorer=scorer,
+            settings=s,
+            event_bus=event_bus,
+            llm=llm_factory,
+            scorer=scorer,
             stage1_repo=stage1_repo,
         )
 
@@ -697,12 +743,19 @@ class TestHandleEarnPost:
         pos = _make_open_pos(direction="long")
         agent = self._beat_agent(open_pos=pos)
         event = NewsEvent(
-            event_id="earn-beat-1", headline="AAPL beats Q2", summary="",
-            source="benzinga", tickers=["AAPL"],
-            event_type=EventType.EARN_BEAT, published_at=NOW,
+            event_id="earn-beat-1",
+            headline="AAPL beats Q2",
+            summary="",
+            source="benzinga",
+            tickers=["AAPL"],
+            event_type=EventType.EARN_BEAT,
+            published_at=NOW,
         )
         signal = agent._build_signal(
-            self.sentiment, self.market, {"earn-beat-1": event}, {},
+            self.sentiment,
+            self.market,
+            {"earn-beat-1": event},
+            {},
         )
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
@@ -715,12 +768,19 @@ class TestHandleEarnPost:
         pos = _make_open_pos(direction="short")
         agent = self._beat_agent(open_pos=pos)
         event = NewsEvent(
-            event_id="earn-beat-1", headline="AAPL beats Q2", summary="",
-            source="benzinga", tickers=["AAPL"],
-            event_type=EventType.EARN_BEAT, published_at=NOW,
+            event_id="earn-beat-1",
+            headline="AAPL beats Q2",
+            summary="",
+            source="benzinga",
+            tickers=["AAPL"],
+            event_type=EventType.EARN_BEAT,
+            published_at=NOW,
         )
         signal = agent._build_signal(
-            self.sentiment, self.market, {"earn-beat-1": event}, {},
+            self.sentiment,
+            self.market,
+            {"earn-beat-1": event},
+            {},
         )
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
@@ -731,16 +791,25 @@ class TestHandleEarnPost:
     def test_earn_miss_produces_short(self):
         agent = self._beat_agent(open_pos=None)
         sentiment = _make_sentiment(
-            event_id="earn-miss-1", label=SentimentLabel.VERY_BEARISH,
-            score=-0.88, confidence=0.91,
+            event_id="earn-miss-1",
+            label=SentimentLabel.VERY_BEARISH,
+            score=-0.88,
+            confidence=0.91,
         )
         event = NewsEvent(
-            event_id="earn-miss-1", headline="AAPL misses Q2", summary="",
-            source="benzinga", tickers=["AAPL"],
-            event_type=EventType.EARN_MISS, published_at=NOW,
+            event_id="earn-miss-1",
+            headline="AAPL misses Q2",
+            summary="",
+            source="benzinga",
+            tickers=["AAPL"],
+            event_type=EventType.EARN_MISS,
+            published_at=NOW,
         )
         signal = agent._build_signal(
-            sentiment, self.market, {"earn-miss-1": event}, {},
+            sentiment,
+            self.market,
+            {"earn-miss-1": event},
+            {},
         )
         assert signal is not None
         assert signal.direction == SignalDirection.SHORT
@@ -748,12 +817,19 @@ class TestHandleEarnPost:
     def test_earn_beat_no_stage1_fresh_pead(self):
         agent = self._beat_agent(open_pos=None)
         event = NewsEvent(
-            event_id="earn-beat-1", headline="AAPL beats Q2", summary="",
-            source="benzinga", tickers=["AAPL"],
-            event_type=EventType.EARN_BEAT, published_at=NOW,
+            event_id="earn-beat-1",
+            headline="AAPL beats Q2",
+            summary="",
+            source="benzinga",
+            tickers=["AAPL"],
+            event_type=EventType.EARN_BEAT,
+            published_at=NOW,
         )
         signal = agent._build_signal(
-            self.sentiment, self.market, {"earn-beat-1": event}, {},
+            self.sentiment,
+            self.market,
+            {"earn-beat-1": event},
+            {},
         )
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
@@ -763,12 +839,19 @@ class TestHandleEarnPost:
     def test_earn_beat_signal_has_horizon_days(self):
         agent = self._beat_agent(open_pos=None)
         event = NewsEvent(
-            event_id="earn-beat-1", headline="AAPL beats Q2", summary="",
-            source="benzinga", tickers=["AAPL"],
-            event_type=EventType.EARN_BEAT, published_at=NOW,
+            event_id="earn-beat-1",
+            headline="AAPL beats Q2",
+            summary="",
+            source="benzinga",
+            tickers=["AAPL"],
+            event_type=EventType.EARN_BEAT,
+            published_at=NOW,
         )
         signal = agent._build_signal(
-            self.sentiment, self.market, {"earn-beat-1": event}, {},
+            self.sentiment,
+            self.market,
+            {"earn-beat-1": event},
+            {},
         )
         assert signal is not None
         assert signal.horizon_days == agent.settings.pead_horizon_days
@@ -776,16 +859,25 @@ class TestHandleEarnPost:
     def test_earn_miss_signal_has_horizon_days(self):
         agent = self._beat_agent(open_pos=None)
         sentiment = _make_sentiment(
-            event_id="earn-miss-1", label=SentimentLabel.VERY_BEARISH,
-            score=-0.9, confidence=0.85,
+            event_id="earn-miss-1",
+            label=SentimentLabel.VERY_BEARISH,
+            score=-0.9,
+            confidence=0.85,
         )
         event = NewsEvent(
-            event_id="earn-miss-1", headline="AAPL misses Q2", summary="",
-            source="benzinga", tickers=["AAPL"],
-            event_type=EventType.EARN_MISS, published_at=NOW,
+            event_id="earn-miss-1",
+            headline="AAPL misses Q2",
+            summary="",
+            source="benzinga",
+            tickers=["AAPL"],
+            event_type=EventType.EARN_MISS,
+            published_at=NOW,
         )
         signal = agent._build_signal(
-            sentiment, self.market, {"earn-miss-1": event}, {},
+            sentiment,
+            self.market,
+            {"earn-miss-1": event},
+            {},
         )
         assert signal is not None
         assert signal.horizon_days == agent.settings.pead_horizon_days
@@ -800,13 +892,19 @@ class TestHandleEarnMixed:
     def setup_method(self) -> None:
         self.market = _make_market()
         self.sentiment = _make_sentiment(
-            event_id="earn-mixed-1", label=SentimentLabel.NEUTRAL,
-            score=0.0, confidence=0.50,
+            event_id="earn-mixed-1",
+            label=SentimentLabel.NEUTRAL,
+            score=0.0,
+            confidence=0.50,
         )
         self.event = NewsEvent(
-            event_id="earn-mixed-1", headline="AAPL mixed Q2", summary="",
-            source="benzinga", tickers=["AAPL"],
-            event_type=EventType.EARN_MIXED, published_at=NOW,
+            event_id="earn-mixed-1",
+            headline="AAPL mixed Q2",
+            summary="",
+            source="benzinga",
+            tickers=["AAPL"],
+            event_type=EventType.EARN_MIXED,
+            published_at=NOW,
         )
 
     def _mixed_agent(self, open_pos: OpenStage1Position | None) -> SignalGeneratorAgent:
@@ -821,7 +919,10 @@ class TestHandleEarnMixed:
         stage1_repo = MagicMock()
         stage1_repo.load_open.return_value = open_pos
         return SignalGeneratorAgent(
-            settings=s, event_bus=event_bus, llm=llm_factory, scorer=scorer,
+            settings=s,
+            event_bus=event_bus,
+            llm=llm_factory,
+            scorer=scorer,
             stage1_repo=stage1_repo,
         )
 
@@ -829,7 +930,10 @@ class TestHandleEarnMixed:
         pos = _make_open_pos()
         agent = self._mixed_agent(open_pos=pos)
         signal = agent._build_signal(
-            self.sentiment, self.market, {"earn-mixed-1": self.event}, {},
+            self.sentiment,
+            self.market,
+            {"earn-mixed-1": self.event},
+            {},
         )
         assert signal is not None
         assert signal.direction == SignalDirection.CLOSE
@@ -842,7 +946,10 @@ class TestHandleEarnMixed:
     def test_earn_mixed_no_stage1_returns_none(self):
         agent = self._mixed_agent(open_pos=None)
         signal = agent._build_signal(
-            self.sentiment, self.market, {"earn-mixed-1": self.event}, {},
+            self.sentiment,
+            self.market,
+            {"earn-mixed-1": self.event},
+            {},
         )
         assert signal is None
         agent._stage1_repo.update_status.assert_not_called()
@@ -880,3 +987,343 @@ class TestParseCalendarFields:
         result_date, result_qtr = _parse_calendar_fields("AAPL", None, {})
         assert result_date == date.today() + timedelta(days=3)
         assert result_qtr == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared by decay / aggregation tests
+# ---------------------------------------------------------------------------
+
+
+def _make_lookup(pairs: dict[str, datetime]) -> dict[str, MagicMock]:
+    """Build a mock event_lookup mapping event_id → object with .published_at."""
+    return {eid: MagicMock(published_at=pub) for eid, pub in pairs.items()}
+
+
+# ---------------------------------------------------------------------------
+# TestDecayWeight
+# ---------------------------------------------------------------------------
+
+
+class TestDecayWeight:
+    def test_age_zero_returns_one(self):
+        now = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+        assert _decay_weight(now, now, halflife_hours=72) == pytest.approx(1.0)
+
+    def test_halflife_gives_half(self):
+        now = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+        pub = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)  # exactly 72 h ago
+        assert _decay_weight(pub, now, halflife_hours=72) == pytest.approx(
+            0.5, rel=1e-4
+        )
+
+    def test_naive_datetime_treated_as_utc(self):
+        now = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+        pub = datetime(2026, 3, 3, 12, 0)  # naive — 24 h ago
+        result = _decay_weight(pub, now, halflife_hours=72)
+        assert 0.7 < result < 0.85  # expected ~0.794
+
+    def test_none_returns_one(self):
+        now = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+        assert _decay_weight(None, now, halflife_hours=72) == pytest.approx(1.0)
+
+    def test_future_timestamp_clamps_to_one(self):
+        now = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+        pub = datetime(2026, 3, 2, 12, 0, tzinfo=UTC)  # clock-skewed future
+        assert _decay_weight(pub, now, halflife_hours=72) == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# TestAggregateTickerGroup
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateTickerGroup:
+    NOW = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+    HL = 72.0
+
+    def test_single_bullish_returns_result(self):
+        sr = _make_sentiment(
+            event_id="e1", label=SentimentLabel.BULLISH, score=0.8, confidence=0.9
+        )
+        lookup = _make_lookup({"e1": self.NOW - timedelta(hours=10)})
+        result = _aggregate_ticker_group("AAPL", [sr], lookup, self.HL, self.NOW)
+        assert result is not None
+        assert result.ticker == "AAPL"
+        assert result.event_id == "e1"
+        assert result.label in (SentimentLabel.BULLISH, SentimentLabel.VERY_BULLISH)
+
+    def test_same_direction_representative_is_freshest(self):
+        srs = [
+            _make_sentiment(
+                event_id="old", label=SentimentLabel.BULLISH, score=0.7, confidence=0.8
+            ),
+            _make_sentiment(
+                event_id="new",
+                label=SentimentLabel.VERY_BULLISH,
+                score=0.9,
+                confidence=0.9,
+            ),
+        ]
+        lookup = _make_lookup(
+            {
+                "old": self.NOW - timedelta(hours=120),
+                "new": self.NOW - timedelta(hours=2),
+            }
+        )
+        result = _aggregate_ticker_group("AAPL", srs, lookup, self.HL, self.NOW)
+        assert result is not None
+        assert result.event_id == "new"  # highest weight = freshest
+
+    def test_equal_weight_conflict_returns_none(self):
+        srs = [
+            _make_sentiment(
+                event_id="bull", label=SentimentLabel.BULLISH, score=0.8, confidence=0.9
+            ),
+            _make_sentiment(
+                event_id="bear",
+                label=SentimentLabel.BEARISH,
+                score=-0.8,
+                confidence=0.9,
+            ),
+        ]
+        pub = self.NOW - timedelta(hours=5)
+        lookup = _make_lookup({"bull": pub, "bear": pub})
+        result = _aggregate_ticker_group("AAPL", srs, lookup, self.HL, self.NOW)
+        assert result is None
+
+    def test_small_minority_does_not_trigger_mixed(self):
+        # 3 strong bullish + 1 very-low-confidence bearish → minority < 25% → passes
+        srs = [
+            _make_sentiment(
+                event_id="b1",
+                label=SentimentLabel.VERY_BULLISH,
+                score=0.9,
+                confidence=0.9,
+            ),
+            _make_sentiment(
+                event_id="b2",
+                label=SentimentLabel.VERY_BULLISH,
+                score=0.85,
+                confidence=0.9,
+            ),
+            _make_sentiment(
+                event_id="b3", label=SentimentLabel.BULLISH, score=0.8, confidence=0.9
+            ),
+            _make_sentiment(
+                event_id="br", label=SentimentLabel.BEARISH, score=-0.5, confidence=0.15
+            ),
+        ]
+        lookup = _make_lookup(
+            {k: self.NOW - timedelta(hours=2) for k in ["b1", "b2", "b3", "br"]}
+        )
+        result = _aggregate_ticker_group("AAPL", srs, lookup, self.HL, self.NOW)
+        assert result is not None
+        assert result.label in (SentimentLabel.BULLISH, SentimentLabel.VERY_BULLISH)
+
+    def test_all_neutral_returns_none(self):
+        sr = _make_sentiment(
+            event_id="e1", label=SentimentLabel.NEUTRAL, score=0.0, confidence=0.5
+        )
+        lookup = _make_lookup({"e1": self.NOW - timedelta(hours=5)})
+        result = _aggregate_ticker_group("AAPL", [sr], lookup, self.HL, self.NOW)
+        assert result is None
+
+    def test_older_article_loses_to_fresh_opposing(self):
+        # 200 h old BULLISH (decay ≈ 0.15) vs 1 h fresh BEARISH (decay ≈ 0.99)
+        # bearish weight dominates → BEARISH, fresh article is representative
+        srs = [
+            _make_sentiment(
+                event_id="old",
+                label=SentimentLabel.VERY_BULLISH,
+                score=0.9,
+                confidence=0.9,
+            ),
+            _make_sentiment(
+                event_id="fresh",
+                label=SentimentLabel.BEARISH,
+                score=-0.8,
+                confidence=0.85,
+            ),
+        ]
+        lookup = _make_lookup(
+            {
+                "old": self.NOW - timedelta(hours=200),
+                "fresh": self.NOW - timedelta(hours=1),
+            }
+        )
+        result = _aggregate_ticker_group("AAPL", srs, lookup, self.HL, self.NOW)
+        assert result is not None
+        assert result.label in (SentimentLabel.BEARISH, SentimentLabel.VERY_BEARISH)
+        assert result.event_id == "fresh"
+
+    def test_fresh_event_wins_over_stale_as_representative(self):
+        srs = [
+            _make_sentiment(
+                event_id="stale-news",
+                label=SentimentLabel.BULLISH,
+                score=0.7,
+                confidence=0.8,
+            ),
+            _make_sentiment(
+                event_id="earn-pre",
+                label=SentimentLabel.BULLISH,
+                score=0.8,
+                confidence=0.85,
+            ),
+        ]
+        lookup = _make_lookup(
+            {
+                "stale-news": self.NOW - timedelta(hours=150),
+                "earn-pre": self.NOW - timedelta(hours=2),
+            }
+        )
+        result = _aggregate_ticker_group("AAPL", srs, lookup, self.HL, self.NOW)
+        assert result is not None
+        assert result.event_id == "earn-pre"
+
+    def test_missing_event_in_lookup_uses_no_decay(self):
+        # event_id not in lookup → published_at=None → decay=1.0 (no discount)
+        sr = _make_sentiment(
+            event_id="unknown", label=SentimentLabel.BULLISH, score=0.8, confidence=0.9
+        )
+        result = _aggregate_ticker_group("AAPL", [sr], {}, self.HL, self.NOW)
+        assert result is not None
+        assert result.event_id == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# TestRunAggregation  (integration — exercises run())
+# ---------------------------------------------------------------------------
+
+
+class TestRunAggregation:
+    def setup_method(self) -> None:
+        self.agent = _make_agent(
+            _make_settings(
+                article_decay_halflife_hours=72.0, min_signal_conviction=0.60
+            )
+        )
+        self.agent._stage1_repo.load_open.return_value = None
+
+    async def test_five_same_ticker_produces_one_signal(self):
+        now = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+        events = [
+            NewsEvent(
+                event_id=f"e{i}",
+                headline="AAPL earnings",
+                summary="",
+                source="rss",
+                tickers=["AAPL"],
+                published_at=now - timedelta(hours=i * 10),
+            )
+            for i in range(5)
+        ]
+        srs = [
+            _make_sentiment(
+                event_id=f"e{i}",
+                label=SentimentLabel.BULLISH,
+                score=0.8,
+                confidence=0.9,
+            )
+            for i in range(5)
+        ]
+        result = await self.agent.run(
+            {
+                "sentiment_results": srs,
+                "market_context": {"AAPL": _make_market()},
+                "news_events": events,
+            }
+        )
+        assert len(result["trade_signals"]) == 1
+        assert result["trade_signals"][0].ticker == "AAPL"
+
+    async def test_conflicting_same_ticker_produces_no_signal(self):
+        now = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+        pub = now - timedelta(hours=5)
+        events = [
+            NewsEvent(
+                event_id="bull",
+                headline="AAPL up",
+                summary="",
+                source="rss",
+                tickers=["AAPL"],
+                published_at=pub,
+            ),
+            NewsEvent(
+                event_id="bear",
+                headline="AAPL down",
+                summary="",
+                source="rss",
+                tickers=["AAPL"],
+                published_at=pub,
+            ),
+        ]
+        srs = [
+            _make_sentiment(
+                event_id="bull", label=SentimentLabel.BULLISH, score=0.8, confidence=0.9
+            ),
+            _make_sentiment(
+                event_id="bear",
+                label=SentimentLabel.BEARISH,
+                score=-0.8,
+                confidence=0.9,
+            ),
+        ]
+        result = await self.agent.run(
+            {
+                "sentiment_results": srs,
+                "market_context": {"AAPL": _make_market()},
+                "news_events": events,
+            }
+        )
+        assert result["trade_signals"] == []
+
+    async def test_two_tickers_each_produce_one_signal(self):
+        now = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+        pub = now - timedelta(hours=1)
+        events = [
+            NewsEvent(
+                event_id="a",
+                headline="AAPL",
+                summary="",
+                source="rss",
+                tickers=["AAPL"],
+                published_at=pub,
+            ),
+            NewsEvent(
+                event_id="m",
+                headline="MSFT",
+                summary="",
+                source="rss",
+                tickers=["MSFT"],
+                published_at=pub,
+            ),
+        ]
+        srs = [
+            _make_sentiment(
+                event_id="a",
+                ticker="AAPL",
+                label=SentimentLabel.BULLISH,
+                score=0.85,
+                confidence=0.9,
+            ),
+            _make_sentiment(
+                event_id="m",
+                ticker="MSFT",
+                label=SentimentLabel.BULLISH,
+                score=0.85,
+                confidence=0.9,
+            ),
+        ]
+        result = await self.agent.run(
+            {
+                "sentiment_results": srs,
+                "market_context": {
+                    "AAPL": _make_market(ticker="AAPL"),
+                    "MSFT": _make_market(ticker="MSFT"),
+                },
+                "news_events": events,
+            }
+        )
+        tickers = {s.ticker for s in result["trade_signals"]}
+        assert tickers == {"AAPL", "MSFT"}
