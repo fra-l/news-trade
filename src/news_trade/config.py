@@ -193,6 +193,14 @@ class Settings(BaseSettings):
         default=True,
         description="Pre-filter articles by ticker keyword before Claude analysis",
     )
+    article_decay_halflife_hours: float = Field(
+        default=72.0,
+        description=(
+            "Half-life (hours) for exponential article age decay in per-ticker "
+            "sentiment aggregation. Older articles contribute less to the aggregated "
+            "signal; 72 h gives a broad pre-earnings window."
+        ),
+    )
     signal_debate_rounds: int = Field(
         default=0,
         description="Number of bull/bear debate rounds per signal (0 = disabled)",

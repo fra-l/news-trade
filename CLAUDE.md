@@ -165,6 +165,7 @@ to `.env` before running.
 | `SENTIMENT_DRY_RUN` | `false` | Skip real Claude calls; return neutral |
 | `SENTIMENT_MAX_CONCURRENT` | `5` | Max parallel LLM calls per batch; lower for local Ollama (e.g. `2`) |
 | `NEWS_KEYWORD_PREFILTER` | `true` | Pre-filter news by keyword before sentiment |
+| `ARTICLE_DECAY_HALFLIFE_HOURS` | `72` | Half-life (hours) for exponential article age decay in per-ticker sentiment aggregation; lower = recency-focused, higher = broader quarterly context |
 | `EARN_BEAT_PCT_THRESHOLD` | `2.0` | EPS % surprise above which event is EARN_BEAT |
 | `EARN_MISS_PCT_THRESHOLD` | `-2.0` | EPS % surprise below which event is EARN_MISS |
 | `EARN_STRONG_SIGMA_THRESHOLD` | `2.0` | Sigma threshold for STRONG signal tier |
