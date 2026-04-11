@@ -150,20 +150,23 @@ All alpaca-py numeric fields are Decimal strings; cast with `float()`.
 
 Accepts `llm: LLMClientFactory` and `scorer: ConfidenceScorer` at construction time.
 
-### What is implemented (Pattern A)
+### What is implemented (Pattern A + EARN_PRE thesis debate)
 
 | Method | Purpose |
 |---|---|
-| `run(state)` | Groups `sentiment_results` by ticker; applies `_aggregate_ticker_group()` to produce at most one decay-weighted `SentimentResult` per ticker (MIXED or all-neutral → skip); calls `_build_signal()` once per ticker; then `_debate_signal()` for gate-passed signals |
-| `_build_signal(sentiment, market_ctx, event_lookup)` | Maps label → direction; computes conviction; applies `min_signal_conviction` threshold; calls `scorer.score()` + `scorer.apply_gate()` to set `confidence_score` and `passed_confidence_gate`; returns `TradeSignal` or `None` |
+| `run(state)` | Groups `sentiment_results` by ticker; applies `_aggregate_ticker_group()` to produce at most one decay-weighted `SentimentResult` per ticker (MIXED or all-neutral → skip); calls `await _build_signal()` once per ticker; then `_debate_signal()` for gate-passed non-EARN_PRE signals |
+| `_build_signal(sentiment, market_ctx, event_lookup, estimates, group)` | async; dispatches EARN_* to dedicated handlers; for all other events: maps label → direction, applies conviction threshold, scores, gates. `group` is the full list of `SentimentResult`s for this ticker in this cycle. |
 | `_compute_position_size(ticker, conviction, volatility)` | Volatility-adjusted heuristic: `max(1, int(conviction / max(vol, 0.01) * 10))` |
 | `_compute_stop_loss(entry, volatility, direction)` | 2× daily vol proxy offset from entry; LONG → below, SHORT → above |
-| `_debate_signal(signal)` | Bull/bear debate gate — skips if `signal_debate_rounds=0` or below `signal_debate_threshold`; applies CONFIRM/REDUCE/REJECT verdict |
+| `_debate_signal(signal)` | Bull/bear debate gate — skips if `signal_debate_rounds=0` or below `signal_debate_threshold`; applies CONFIRM/REDUCE/REJECT verdict. NOT called for EARN_PRE (thesis debate runs instead). |
+| `_run_thesis_debate(ticker, days_until_report, fiscal_quarter, beat_rate, beat_rate_source, news_summaries, eps_estimate)` | async; runs Bull LLM + Bear LLM in parallel (quick model), then Synthesis LLM (deep model, structured output); returns `_ThesisVerdictSchema(direction, conviction, reasoning)` |
 
-**Decay-weighted aggregation (fix: multiple orders per ticker)** — `_aggregate_ticker_group(ticker, group, event_lookup, halflife_hours, now)` (module-level) collapses N articles for the same ticker into one `SentimentResult`. Weight per article = `confidence × exp(-ln2 / halflife × age_hours)`. Returns `None` when all-neutral or when both bullish and bearish each exceed 25% of total directional weight (MIXED). The representative `event_id` — used by `_build_signal()` to dispatch to the correct EARN_* handler — is the highest-weight (most recent × high-confidence) article. `_decay_weight(published_at, now, halflife_hours)` (module-level) handles both naive (treated as UTC) and timezone-aware datetimes; `None` returns 1.0.
+**Decay-weighted aggregation (fix: multiple orders per ticker)** — `_aggregate_ticker_group(ticker, group, event_lookup, halflife_hours, now)` (module-level) collapses N articles for the same ticker into one `SentimentResult`. Weight per article = `confidence x exp(-ln2 / halflife x age_hours)`. Returns `None` when all-neutral or when both bullish and bearish each exceed 25% of total directional weight (MIXED). The representative `event_id` — used by `_build_signal()` to dispatch to the correct EARN_* handler — is the highest-weight (most recent x high-confidence) article. `_decay_weight(published_at, now, halflife_hours)` (module-level) handles both naive (treated as UTC) and timezone-aware datetimes; `None` returns 1.0.
 
 Prompt helpers are module-level functions: `_build_bull_prompt`, `_build_bear_prompt`,
-`_build_synthesis_prompt`. The synthesis uses `response_schema=_DebateVerdictSchema`
+`_build_synthesis_prompt` (for Pattern A gate debate); `_build_thesis_bull_prompt`,
+`_build_thesis_bear_prompt`, `_build_thesis_synthesis_prompt` (for EARN_PRE thesis debate).
+All synthesis steps use `response_schema=_DebateVerdictSchema` / `_ThesisVerdictSchema`
 (structured output via tool-use).
 
 ### EARN_\* two-stage logic (Pattern D) — Done
@@ -173,17 +176,33 @@ Prompt helpers are module-level functions: `_build_bull_prompt`, `_build_bear_pr
 
 | Handler | Trigger | Logic |
 |---|---|---|
-| `_handle_earn_pre()` | `EARN_PRE` | Loads `load_historical_outcomes(ticker)`; three-tier fallback: (1) `source='observed'` beat_rate, (2) `estimates[ticker].historical_beat_rate` from FMP, (3) `settings.earn_default_beat_rate`; skips if outside [0.55, 0.85]; sizes position [0.25–0.40]; persists `OpenStage1Position`; emits LONG/SHORT signal with `stage1_id` |
+| `_handle_earn_pre()` | `EARN_PRE` | **Thesis-debate driven** (see below). Three-tier beat-rate fallback used as context for debaters, not as direction gate. |
 | `_handle_earn_post()` | `EARN_BEAT` / `EARN_MISS` | Loads `load_open(ticker)`; if agrees → `update_status(CONFIRMED)`, add remaining size; if disagrees → `update_status(REVERSED)`, full reverse; if no Stage 1 → fresh PEAD at 75% |
 | `_handle_earn_mixed()` | `EARN_MIXED` | Loads `load_open(ticker)`; if open → `update_status(EXITED)`, emit CLOSE signal with `passed_confidence_gate=True`; if no Stage 1 → return None |
 
-`run()` now also reads `estimates: dict[str, EstimatesData]` from state and passes it to
+`run()` also reads `estimates: dict[str, EstimatesData]` from state and passes it to
 `_build_signal()`. `_parse_calendar_fields()` (module-level helper) extracts `report_date`
 and `fiscal_quarter` from `estimates[ticker]` first, then parses the event headline as
 fallback, then defaults to `today+3 / "unknown"`.
 
 EARN_MIXED CLOSE signals bypass the confidence gate (`passed_confidence_gate=True`) because
 the gate for EARN_MIXED is 1.01 by design — exiting a position must not be blocked.
+
+#### `_handle_earn_pre()` — 11-step decision tree (Phase 2)
+
+Direction is no longer determined by beat rate. Instead a 3-LLM debate is run:
+
+1. Load any existing open Stage 1 position via `load_open(ticker)`.
+2. Detect new non-ephemeral news: `any(not sr.event_id.startswith("ticker_earn_pre_") for sr in group)`.
+3. **Cost guard**: existing position + no new news → `return None` (skip debate).
+4. Three-tier beat-rate fallback: (1) `source='observed'`, (2) FMP `estimates[ticker].historical_beat_rate`, (3) `settings.earn_default_beat_rate`. Beat rate is now context for debaters, not a gate — `_BEAT_RATE_MIN/_MAX` bounds check removed.
+5. Build `news_summaries`: top-5 `SentimentResult.reasoning` strings from `group`, sorted by `conviction x decay` descending.
+6. Resolve `report_date`, `fiscal_quarter`, `eps_estimate` from calendar fields.
+7. Run `_run_thesis_debate(...)` → `_ThesisVerdictSchema(direction, conviction, reasoning)`.
+8. `NEUTRAL` verdict → `return None`.
+9. Reaffirmation: existing position, same direction → `return None` (hold).
+10. Direction flip: existing position, opposite direction → CLOSE signal if `conviction > earn_thesis_flip_conviction_threshold`; otherwise `return None` (hold).
+11. Open new position: compute `size_pct` using beat-rate formula scaled by `conviction`, clamp to `[0.25, 0.40]`; persist `OpenStage1Position`; emit LONG/SHORT signal via `scorer.apply_gate()`.
 
 See `docs/architecture/event-driven-signal-layer.md §3` for the full decision tree.
 

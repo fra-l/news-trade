@@ -14,6 +14,7 @@ from news_trade.agents.signal_generator import (
     _aggregate_ticker_group,
     _decay_weight,
     _parse_calendar_fields,
+    _ThesisVerdictSchema,
 )
 from news_trade.config import Settings
 from news_trade.models.events import EventType, NewsEvent
@@ -117,61 +118,61 @@ class TestBuildSignal:
     def setup_method(self) -> None:
         self.agent = _make_agent()
 
-    def test_bullish_sentiment_produces_long(self):
+    async def test_bullish_sentiment_produces_long(self):
         sentiment = _make_sentiment(
             label=SentimentLabel.BULLISH, score=0.85, confidence=0.90
         )
         market = _make_market()
-        signal = self.agent._build_signal(sentiment, market, {}, {})
+        signal = await self.agent._build_signal(sentiment, market, {}, {})
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
         assert signal.ticker == "AAPL"
 
-    def test_very_bullish_produces_long(self):
+    async def test_very_bullish_produces_long(self):
         sentiment = _make_sentiment(
             label=SentimentLabel.VERY_BULLISH, score=0.95, confidence=0.95
         )
-        signal = self.agent._build_signal(sentiment, _make_market(), {}, {})
+        signal = await self.agent._build_signal(sentiment, _make_market(), {}, {})
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
 
-    def test_bearish_sentiment_produces_short(self):
+    async def test_bearish_sentiment_produces_short(self):
         sentiment = _make_sentiment(
             label=SentimentLabel.BEARISH, score=-0.80, confidence=0.85
         )
-        signal = self.agent._build_signal(sentiment, _make_market(), {}, {})
+        signal = await self.agent._build_signal(sentiment, _make_market(), {}, {})
         assert signal is not None
         assert signal.direction == SignalDirection.SHORT
 
-    def test_very_bearish_produces_short(self):
+    async def test_very_bearish_produces_short(self):
         sentiment = _make_sentiment(
             label=SentimentLabel.VERY_BEARISH,
             score=-0.90,
             confidence=0.90,
         )
-        signal = self.agent._build_signal(sentiment, _make_market(), {}, {})
+        signal = await self.agent._build_signal(sentiment, _make_market(), {}, {})
         assert signal is not None
         assert signal.direction == SignalDirection.SHORT
 
-    def test_neutral_returns_none(self):
+    async def test_neutral_returns_none(self):
         sentiment = _make_sentiment(
             label=SentimentLabel.NEUTRAL, score=0.0, confidence=0.50
         )
-        signal = self.agent._build_signal(sentiment, _make_market(), {}, {})
+        signal = await self.agent._build_signal(sentiment, _make_market(), {}, {})
         assert signal is None
 
-    def test_below_conviction_threshold_returns_none(self):
+    async def test_below_conviction_threshold_returns_none(self):
         # abs(score) * confidence = 0.3 * 0.5 = 0.15 < 0.60
         sentiment = _make_sentiment(
             label=SentimentLabel.BULLISH, score=0.30, confidence=0.50
         )
-        signal = self.agent._build_signal(sentiment, _make_market(), {}, {})
+        signal = await self.agent._build_signal(sentiment, _make_market(), {}, {})
         assert signal is None
 
-    def test_signal_fields_populated(self):
+    async def test_signal_fields_populated(self):
         sentiment = _make_sentiment()
         market = _make_market(latest_close=150.0, volatility_20d=0.20)
-        signal = self.agent._build_signal(sentiment, market, {}, {})
+        signal = await self.agent._build_signal(sentiment, market, {}, {})
         assert signal is not None
         assert signal.event_id == sentiment.event_id
         assert signal.rationale == sentiment.reasoning
@@ -179,28 +180,28 @@ class TestBuildSignal:
         assert signal.provider == "anthropic"
         assert signal.stop_loss is not None
 
-    def test_stop_loss_long_below_entry(self):
+    async def test_stop_loss_long_below_entry(self):
         market = _make_market(latest_close=100.0, volatility_20d=0.10)
         sentiment = _make_sentiment(
             label=SentimentLabel.BULLISH, score=0.9, confidence=0.9
         )
-        signal = self.agent._build_signal(sentiment, market, {}, {})
+        signal = await self.agent._build_signal(sentiment, market, {}, {})
         assert signal is not None
         assert signal.stop_loss < 100.0  # long stop below entry
 
-    def test_stop_loss_short_above_entry(self):
+    async def test_stop_loss_short_above_entry(self):
         market = _make_market(latest_close=100.0, volatility_20d=0.10)
         sentiment = _make_sentiment(
             label=SentimentLabel.BEARISH, score=-0.9, confidence=0.9
         )
-        signal = self.agent._build_signal(sentiment, market, {}, {})
+        signal = await self.agent._build_signal(sentiment, market, {}, {})
         assert signal is not None
         assert signal.stop_loss > 100.0  # short stop above entry
 
-    def test_position_size_positive(self):
+    async def test_position_size_positive(self):
         market = _make_market(volatility_20d=0.25)
         sentiment = _make_sentiment()
-        signal = self.agent._build_signal(sentiment, market, {}, {})
+        signal = await self.agent._build_signal(sentiment, market, {}, {})
         assert signal is not None
         assert signal.suggested_qty >= 1
 
@@ -490,7 +491,7 @@ def _make_open_pos(
 
 
 def _make_earn_agent(
-    beat_rate: float = 0.72, source: str = "observed"
+    beat_rate: float | None = 0.72, source: str = "observed"
 ) -> SignalGeneratorAgent:
     """Agent with a mock Stage1Repository returning the given beat_rate."""
     s = _make_settings()
@@ -498,8 +499,12 @@ def _make_earn_agent(
     llm_quick = MagicMock()
     llm_quick.model_id = "claude-haiku-4-5-20251001"
     llm_quick.provider = "anthropic"
+    llm_deep = MagicMock()
+    llm_deep.model_id = "claude-sonnet-4-6"
+    llm_deep.provider = "anthropic"
     llm_factory = MagicMock()
     llm_factory.quick = llm_quick
+    llm_factory.deep = llm_deep
     scorer = ConfidenceScorer(settings=s)
     stage1_repo = MagicMock()
     outcomes = HistoricalOutcomes(
@@ -526,6 +531,12 @@ def _make_earn_agent(
 class TestHandleEarnPre:
     def setup_method(self) -> None:
         self.agent = _make_earn_agent(beat_rate=0.72)
+        # Mock the thesis debate so tests don't make real LLM calls.
+        self.agent._run_thesis_debate = AsyncMock(
+            return_value=_ThesisVerdictSchema(
+                direction="LONG", conviction=0.80, reasoning="bull"
+            )
+        )
         self.sentiment = _make_sentiment(
             event_id="earn-evt-1",
             label=SentimentLabel.BULLISH,
@@ -536,171 +547,192 @@ class TestHandleEarnPre:
         self.event = _make_earn_event(event_type=EventType.EARN_PRE)
         self.estimates = {"AAPL": _make_estimates()}
 
-    def test_earn_pre_produces_long_for_high_beat_rate(self):
-        signal = self.agent._build_signal(
+    async def test_earn_pre_produces_long_for_high_beat_rate(self):
+        signal = await self.agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             self.estimates,
+            group=[self.sentiment],
         )
         assert signal is not None
         assert signal.direction == SignalDirection.LONG
 
-    def test_earn_pre_sets_stage1_id(self):
-        signal = self.agent._build_signal(
+    async def test_earn_pre_sets_stage1_id(self):
+        signal = await self.agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             self.estimates,
+            group=[self.sentiment],
         )
         assert signal is not None
         assert signal.stage1_id is not None
 
-    def test_earn_pre_has_no_horizon_days(self):
-        signal = self.agent._build_signal(
+    async def test_earn_pre_has_no_horizon_days(self):
+        signal = await self.agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             self.estimates,
+            group=[self.sentiment],
         )
         assert signal is not None
         assert signal.horizon_days is None
 
-    def test_earn_pre_persists_position(self):
-        self.agent._build_signal(
+    async def test_earn_pre_persists_position(self):
+        await self.agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             self.estimates,
+            group=[self.sentiment],
         )
         self.agent._stage1_repo.persist.assert_called_once()
 
-    def test_earn_pre_stop_loss_below_entry_for_long(self):
-        signal = self.agent._build_signal(
+    async def test_earn_pre_stop_loss_below_entry_for_long(self):
+        signal = await self.agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             self.estimates,
+            group=[self.sentiment],
         )
         assert signal is not None
         # 4% stop: 200 * (1 - 0.04) = 192
         assert signal.stop_loss is not None
         assert signal.stop_loss < self.market.latest_close
 
-    def test_earn_pre_skip_when_beat_rate_below_min(self):
-        agent = _make_earn_agent(beat_rate=0.50)
-        signal = agent._build_signal(
+    # Three-tier beat-rate fallback tests — assert debate called with correct beat_rate
+    async def test_earn_pre_observed_beat_rate_passed_to_debate(self):
+        """Observed beat_rate=0.72 is passed as context to _run_thesis_debate."""
+        await self.agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             self.estimates,
+            group=[self.sentiment],
         )
-        assert signal is None
+        call_kwargs = self.agent._run_thesis_debate.call_args.kwargs
+        assert call_kwargs["beat_rate"] == pytest.approx(0.72)
+        assert call_kwargs["beat_rate_source"] == "observed"
 
-    def test_earn_pre_skip_when_beat_rate_above_max(self):
-        agent = _make_earn_agent(beat_rate=0.90)
-        signal = agent._build_signal(
-            self.sentiment,
-            self.market,
-            {"earn-evt-1": self.event},
-            self.estimates,
-        )
-        assert signal is None
-
-    def test_earn_pre_short_for_low_beat_rate(self):
-        agent = _make_earn_agent(beat_rate=0.57)
-        signal = agent._build_signal(
-            self.sentiment,
-            self.market,
-            {"earn-evt-1": self.event},
-            self.estimates,
-        )
-        assert signal is not None
-        assert signal.direction == SignalDirection.SHORT
-
-    def test_earn_pre_uses_default_beat_rate_when_fmp_source(self):
+    async def test_earn_pre_uses_default_beat_rate_when_fmp_source(self):
+        """With source='fmp' and no FMP estimate, default beat_rate is passed."""
         agent = _make_earn_agent(beat_rate=0.65, source="fmp")
-        signal = agent._build_signal(
+        agent._run_thesis_debate = AsyncMock(
+            return_value=_ThesisVerdictSchema(
+                direction="LONG", conviction=0.80, reasoning="bull"
+            )
+        )
+        await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             self.estimates,
+            group=[self.sentiment],
         )
-        # default beat_rate=0.65 >= 0.60 → LONG, within [0.55, 0.85] → signal emitted
-        assert signal is not None
-        assert signal.direction == SignalDirection.LONG
+        call_kwargs = agent._run_thesis_debate.call_args.kwargs
+        # source='fmp' and outcomes.beat_rate=None → falls through to
+        # estimates[ticker].historical_beat_rate (None) → default
+        assert call_kwargs["beat_rate_source"] == "default"
 
     # Three-tier fallback tests
-    def test_fmp_estimates_beat_rate_used_over_default(self):
+    async def test_fmp_estimates_beat_rate_used_over_default(self):
         """When source='fmp' and estimates carry historical_beat_rate, use it."""
         agent = _make_earn_agent(beat_rate=None, source="fmp")
-        # Override the default beat rate to something that would produce SHORT;
-        # FMP estimates beat_rate=0.75 should win and produce LONG.
+        agent._run_thesis_debate = AsyncMock(
+            return_value=_ThesisVerdictSchema(
+                direction="LONG", conviction=0.80, reasoning="bull"
+            )
+        )
         agent.settings = agent.settings.model_copy(
             update={"earn_default_beat_rate": 0.57}
         )
         estimates_with_rate = {
             "AAPL": _make_estimates().model_copy(update={"historical_beat_rate": 0.75})
         }
-        signal = agent._build_signal(
+        await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             estimates_with_rate,
+            group=[self.sentiment],
         )
-        assert signal is not None
-        assert signal.direction == SignalDirection.LONG
+        call_kwargs = agent._run_thesis_debate.call_args.kwargs
+        assert call_kwargs["beat_rate"] == pytest.approx(0.75)
+        assert call_kwargs["beat_rate_source"] == "fmp"
 
-    def test_default_beat_rate_used_when_no_fmp_estimates(self):
+    async def test_default_beat_rate_used_when_no_fmp_estimates(self):
         """With source='fmp' and no estimates dict entry, fall back to default."""
         agent = _make_earn_agent(beat_rate=None, source="fmp")
+        agent._run_thesis_debate = AsyncMock(
+            return_value=_ThesisVerdictSchema(
+                direction="LONG", conviction=0.80, reasoning="bull"
+            )
+        )
         agent.settings = agent.settings.model_copy(
             update={"earn_default_beat_rate": 0.65}
         )
-        signal = agent._build_signal(
+        await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             {},  # empty estimates
+            group=[self.sentiment],
         )
-        # 0.65 → LONG
-        assert signal is not None
-        assert signal.direction == SignalDirection.LONG
+        call_kwargs = agent._run_thesis_debate.call_args.kwargs
+        assert call_kwargs["beat_rate"] == pytest.approx(0.65)
+        assert call_kwargs["beat_rate_source"] == "default"
 
-    def test_default_beat_rate_used_when_estimates_historical_beat_rate_is_none(self):
+    async def test_default_beat_rate_used_when_estimates_historical_beat_rate_is_none(
+        self,
+    ):
         """With source='fmp' and historical_beat_rate=None, fall back to default."""
         agent = _make_earn_agent(beat_rate=None, source="fmp")
+        agent._run_thesis_debate = AsyncMock(
+            return_value=_ThesisVerdictSchema(
+                direction="LONG", conviction=0.80, reasoning="bull"
+            )
+        )
         agent.settings = agent.settings.model_copy(
             update={"earn_default_beat_rate": 0.57}
         )
         estimates_no_rate = {
             "AAPL": _make_estimates()  # historical_beat_rate defaults to None
         }
-        signal = agent._build_signal(
+        await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             estimates_no_rate,
+            group=[self.sentiment],
         )
-        # 0.57 is in [0.55, 0.85] but < 0.60 → SHORT
-        assert signal is not None
-        assert signal.direction == SignalDirection.SHORT
+        call_kwargs = agent._run_thesis_debate.call_args.kwargs
+        assert call_kwargs["beat_rate"] == pytest.approx(0.57)
+        assert call_kwargs["beat_rate_source"] == "default"
 
-    def test_observed_beat_rate_overrides_fmp_estimates(self):
+    async def test_observed_beat_rate_overrides_fmp_estimates(self):
         """Observed beat rate wins even when estimates carry historical_beat_rate."""
         agent = _make_earn_agent(beat_rate=0.57, source="observed")
-        # FMP estimates say 0.75 (would be LONG), but observed 0.57 (<0.60) → SHORT
+        agent._run_thesis_debate = AsyncMock(
+            return_value=_ThesisVerdictSchema(
+                direction="SHORT", conviction=0.80, reasoning="bear"
+            )
+        )
         estimates_with_rate = {
             "AAPL": _make_estimates().model_copy(update={"historical_beat_rate": 0.75})
         }
-        signal = agent._build_signal(
+        await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-evt-1": self.event},
             estimates_with_rate,
+            group=[self.sentiment],
         )
-        assert signal is not None
-        assert signal.direction == SignalDirection.SHORT
+        call_kwargs = agent._run_thesis_debate.call_args.kwargs
+        assert call_kwargs["beat_rate"] == pytest.approx(0.57)
+        assert call_kwargs["beat_rate_source"] == "observed"
 
 
 # ---------------------------------------------------------------------------
@@ -739,7 +771,7 @@ class TestHandleEarnPost:
             stage1_repo=stage1_repo,
         )
 
-    def test_earn_beat_with_agreeing_stage1_long(self):
+    async def test_earn_beat_with_agreeing_stage1_long(self):
         pos = _make_open_pos(direction="long")
         agent = self._beat_agent(open_pos=pos)
         event = NewsEvent(
@@ -751,7 +783,7 @@ class TestHandleEarnPost:
             event_type=EventType.EARN_BEAT,
             published_at=NOW,
         )
-        signal = agent._build_signal(
+        signal = await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-beat-1": event},
@@ -764,7 +796,7 @@ class TestHandleEarnPost:
             pos.id, Stage1Status.CONFIRMED
         )
 
-    def test_earn_beat_reverses_stage1_short(self):
+    async def test_earn_beat_reverses_stage1_short(self):
         pos = _make_open_pos(direction="short")
         agent = self._beat_agent(open_pos=pos)
         event = NewsEvent(
@@ -776,7 +808,7 @@ class TestHandleEarnPost:
             event_type=EventType.EARN_BEAT,
             published_at=NOW,
         )
-        signal = agent._build_signal(
+        signal = await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-beat-1": event},
@@ -788,7 +820,7 @@ class TestHandleEarnPost:
             pos.id, Stage1Status.REVERSED
         )
 
-    def test_earn_miss_produces_short(self):
+    async def test_earn_miss_produces_short(self):
         agent = self._beat_agent(open_pos=None)
         sentiment = _make_sentiment(
             event_id="earn-miss-1",
@@ -805,7 +837,7 @@ class TestHandleEarnPost:
             event_type=EventType.EARN_MISS,
             published_at=NOW,
         )
-        signal = agent._build_signal(
+        signal = await agent._build_signal(
             sentiment,
             self.market,
             {"earn-miss-1": event},
@@ -814,7 +846,7 @@ class TestHandleEarnPost:
         assert signal is not None
         assert signal.direction == SignalDirection.SHORT
 
-    def test_earn_beat_no_stage1_fresh_pead(self):
+    async def test_earn_beat_no_stage1_fresh_pead(self):
         agent = self._beat_agent(open_pos=None)
         event = NewsEvent(
             event_id="earn-beat-1",
@@ -825,7 +857,7 @@ class TestHandleEarnPost:
             event_type=EventType.EARN_BEAT,
             published_at=NOW,
         )
-        signal = agent._build_signal(
+        signal = await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-beat-1": event},
@@ -836,7 +868,7 @@ class TestHandleEarnPost:
         assert signal.stage1_id is None  # no existing position
         agent._stage1_repo.update_status.assert_not_called()
 
-    def test_earn_beat_signal_has_horizon_days(self):
+    async def test_earn_beat_signal_has_horizon_days(self):
         agent = self._beat_agent(open_pos=None)
         event = NewsEvent(
             event_id="earn-beat-1",
@@ -847,7 +879,7 @@ class TestHandleEarnPost:
             event_type=EventType.EARN_BEAT,
             published_at=NOW,
         )
-        signal = agent._build_signal(
+        signal = await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-beat-1": event},
@@ -856,7 +888,7 @@ class TestHandleEarnPost:
         assert signal is not None
         assert signal.horizon_days == agent.settings.pead_horizon_days
 
-    def test_earn_miss_signal_has_horizon_days(self):
+    async def test_earn_miss_signal_has_horizon_days(self):
         agent = self._beat_agent(open_pos=None)
         sentiment = _make_sentiment(
             event_id="earn-miss-1",
@@ -873,7 +905,7 @@ class TestHandleEarnPost:
             event_type=EventType.EARN_MISS,
             published_at=NOW,
         )
-        signal = agent._build_signal(
+        signal = await agent._build_signal(
             sentiment,
             self.market,
             {"earn-miss-1": event},
@@ -926,10 +958,10 @@ class TestHandleEarnMixed:
             stage1_repo=stage1_repo,
         )
 
-    def test_earn_mixed_with_open_pos_emits_close(self):
+    async def test_earn_mixed_with_open_pos_emits_close(self):
         pos = _make_open_pos()
         agent = self._mixed_agent(open_pos=pos)
-        signal = agent._build_signal(
+        signal = await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-mixed-1": self.event},
@@ -943,9 +975,9 @@ class TestHandleEarnMixed:
             pos.id, Stage1Status.EXITED
         )
 
-    def test_earn_mixed_no_stage1_returns_none(self):
+    async def test_earn_mixed_no_stage1_returns_none(self):
         agent = self._mixed_agent(open_pos=None)
-        signal = agent._build_signal(
+        signal = await agent._build_signal(
             self.sentiment,
             self.market,
             {"earn-mixed-1": self.event},
@@ -1327,3 +1359,129 @@ class TestRunAggregation:
         )
         tickers = {s.ticker for s in result["trade_signals"]}
         assert tickers == {"AAPL", "MSFT"}
+
+
+# ---------------------------------------------------------------------------
+# TestRunThesisDebate
+# ---------------------------------------------------------------------------
+
+
+def _make_thesis_verdict(
+    direction: str = "LONG", conviction: float = 0.80
+) -> _ThesisVerdictSchema:
+    return _ThesisVerdictSchema(
+        direction=direction, conviction=conviction, reasoning="test reasoning"
+    )
+
+
+class TestRunThesisDebate:
+    def setup_method(self) -> None:
+        self.agent = _make_earn_agent(beat_rate=0.72)
+        self.sentiment = _make_sentiment(
+            event_id="earn-evt-1",
+            label=SentimentLabel.BULLISH,
+            score=0.80,
+            confidence=0.90,
+        )
+        self.market = _make_market(latest_close=200.0, volatility_20d=0.20)
+        self.event = _make_earn_event(event_type=EventType.EARN_PRE)
+        self.estimates = {"AAPL": _make_estimates()}
+        self.event_lookup = {"earn-evt-1": self.event}
+
+    def _setup_debate(self, verdict: _ThesisVerdictSchema) -> None:
+        self.agent._run_thesis_debate = AsyncMock(return_value=verdict)
+
+    async def test_neutral_verdict_returns_none(self):
+        self._setup_debate(_make_thesis_verdict(direction="NEUTRAL"))
+        result = await self.agent._build_signal(
+            self.sentiment,
+            self.market,
+            self.event_lookup,
+            self.estimates,
+            group=[self.sentiment],
+        )
+        assert result is None
+
+    async def test_long_verdict_opens_stage1(self):
+        self._setup_debate(_make_thesis_verdict(direction="LONG", conviction=0.80))
+        result = await self.agent._build_signal(
+            self.sentiment,
+            self.market,
+            self.event_lookup,
+            self.estimates,
+            group=[self.sentiment],
+        )
+        assert result is not None
+        assert result.stage1_id is not None
+        self.agent._stage1_repo.persist.assert_called_once()
+
+    async def test_long_verdict_reaffirms_existing_long(self):
+        existing = _make_open_pos(direction="long")
+        self.agent._stage1_repo.load_open.return_value = existing
+        # new_news_present=True: event_id does NOT start with "ticker_earn_pre_"
+        self._setup_debate(_make_thesis_verdict(direction="LONG", conviction=0.80))
+        result = await self.agent._build_signal(
+            self.sentiment,
+            self.market,
+            self.event_lookup,
+            self.estimates,
+            group=[self.sentiment],
+        )
+        assert result is None
+        self.agent._stage1_repo.persist.assert_not_called()
+        self.agent._stage1_repo.update_status.assert_not_called()
+
+    async def test_high_conviction_flip_emits_close(self):
+        existing = _make_open_pos(direction="long")
+        self.agent._stage1_repo.load_open.return_value = existing
+        # conviction=0.80 > default flip threshold (0.65)
+        self._setup_debate(_make_thesis_verdict(direction="SHORT", conviction=0.80))
+        result = await self.agent._build_signal(
+            self.sentiment,
+            self.market,
+            self.event_lookup,
+            self.estimates,
+            group=[self.sentiment],
+        )
+        assert result is not None
+        assert result.direction == SignalDirection.CLOSE
+        self.agent._stage1_repo.update_status.assert_called_once_with(
+            existing.id, Stage1Status.REVERSED
+        )
+
+    async def test_low_conviction_flip_keeps_position(self):
+        existing = _make_open_pos(direction="long")
+        self.agent._stage1_repo.load_open.return_value = existing
+        # conviction=0.50 <= default flip threshold (0.65) → keep
+        self._setup_debate(_make_thesis_verdict(direction="SHORT", conviction=0.50))
+        result = await self.agent._build_signal(
+            self.sentiment,
+            self.market,
+            self.event_lookup,
+            self.estimates,
+            group=[self.sentiment],
+        )
+        assert result is None
+        self.agent._stage1_repo.update_status.assert_not_called()
+
+    async def test_no_new_news_skips_debate(self):
+        existing = _make_open_pos(direction="long")
+        self.agent._stage1_repo.load_open.return_value = existing
+        self._setup_debate(_make_thesis_verdict(direction="LONG", conviction=0.80))
+        # All event_ids start with "ticker_earn_pre_" → new_news_present=False
+        ephemeral_sentiment = _make_sentiment(
+            event_id="ticker_earn_pre_AAPL_2026-04-15",
+            label=SentimentLabel.BULLISH,
+            score=0.80,
+            confidence=0.90,
+        )
+        ephemeral_event = _make_earn_event(event_type=EventType.EARN_PRE)
+        result = await self.agent._build_signal(
+            ephemeral_sentiment,
+            self.market,
+            {"ticker_earn_pre_AAPL_2026-04-15": ephemeral_event},
+            self.estimates,
+            group=[ephemeral_sentiment],
+        )
+        assert result is None
+        self.agent._run_thesis_debate.assert_not_called()

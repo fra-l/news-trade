@@ -7,10 +7,10 @@ import json
 import re
 from datetime import UTC, date, datetime, timedelta
 from math import exp, log
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from news_trade.agents.base import BaseAgent
 from news_trade.models.events import EventType, NewsEvent
@@ -65,6 +65,14 @@ class _DebateVerdictSchema(BaseModel):
     verdict: DebateVerdict
     confidence_delta: float = 0.0
     reasoning: str = ""
+
+
+class _ThesisVerdictSchema(BaseModel):
+    """Structured output for the EARN_PRE quarterly thesis debate."""
+
+    direction: Literal["LONG", "SHORT", "NEUTRAL"]
+    conviction: Annotated[float, Field(ge=0.0, le=1.0)]
+    reasoning: str
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +131,68 @@ def _build_synthesis_prompt(signal: TradeSignal, history: list[DebateRound]) -> 
         "Return your verdict and a confidence_delta in the range [-0.20, +0.10] "
         "that reflects how the debate changed your view of the signal quality. "
         "Also provide brief reasoning."
+    )
+
+
+def _build_thesis_bull_prompt(
+    ticker: str,
+    fiscal_quarter: str,
+    days_until_report: int,
+    beat_rate: float,
+    beat_rate_source: str,
+    eps_estimate: float | None,
+    news_summaries: list[str],
+) -> str:
+    news_block = "\n".join(f"- {s}" for s in news_summaries) or "No recent news."
+    eps_str = f"{eps_estimate:.2f}" if eps_estimate is not None else "N/A"
+    return (
+        f"You are a bullish equity analyst. {ticker} reports {fiscal_quarter} "
+        f"in {days_until_report} day(s).\n"
+        f"Historical beat rate: {beat_rate:.0%} ({beat_rate_source}). "
+        f"Consensus EPS estimate: {eps_str}.\n"
+        f"Recent news:\n{news_block}\n\n"
+        "In 2-3 sentences, make the strongest possible LONG case for entering "
+        "a pre-earnings position."
+    )
+
+
+def _build_thesis_bear_prompt(
+    ticker: str,
+    fiscal_quarter: str,
+    days_until_report: int,
+    beat_rate: float,
+    beat_rate_source: str,
+    eps_estimate: float | None,
+    news_summaries: list[str],
+) -> str:
+    news_block = "\n".join(f"- {s}" for s in news_summaries) or "No recent news."
+    eps_str = f"{eps_estimate:.2f}" if eps_estimate is not None else "N/A"
+    return (
+        f"You are a bearish equity analyst. {ticker} reports {fiscal_quarter} "
+        f"in {days_until_report} day(s).\n"
+        f"Historical beat rate: {beat_rate:.0%} ({beat_rate_source}). "
+        f"Consensus EPS estimate: {eps_str}.\n"
+        f"Recent news:\n{news_block}\n\n"
+        "In 2-3 sentences, make the strongest possible SHORT case against "
+        "a pre-earnings position (or for shorting)."
+    )
+
+
+def _build_thesis_synthesis_prompt(
+    ticker: str,
+    fiscal_quarter: str,
+    days_until_report: int,
+    bull_argument: str,
+    bear_argument: str,
+) -> str:
+    return (
+        f"You are a senior portfolio manager deciding on a pre-earnings position "
+        f"for {ticker} ({fiscal_quarter}, reports in {days_until_report} day(s)).\n\n"
+        f"BULL case:\n{bull_argument}\n\n"
+        f"BEAR case:\n{bear_argument}\n\n"
+        "Decide: LONG (enter long), SHORT (enter short), or NEUTRAL (skip).\n"
+        "Also provide a conviction score 0.0-1.0 and brief reasoning.\n"
+        "Return JSON with keys: direction, conviction, reasoning."
     )
 
 
@@ -207,7 +277,9 @@ class SignalGeneratorAgent(BaseAgent):
                 )
                 continue
 
-            signal = self._build_signal(agg, market_ctx, event_lookup, estimates)
+            signal = await self._build_signal(
+                agg, market_ctx, event_lookup, estimates, group
+            )
             if signal is None:
                 continue
 
@@ -230,19 +302,23 @@ class SignalGeneratorAgent(BaseAgent):
                 ),
             )
 
-            if signal.passed_confidence_gate:
+            if signal.passed_confidence_gate and (
+                _ev is None or _ev.event_type != EventType.EARN_PRE
+            ):
+                # EARN_PRE already ran _run_thesis_debate(); bypass gate debate
                 signal = await self._debate_signal(signal)
 
             trade_signals.append(signal)
 
         return {"trade_signals": trade_signals}
 
-    def _build_signal(
+    async def _build_signal(
         self,
         sentiment: SentimentResult,
         market_ctx: MarketSnapshot,
         event_lookup: dict[str, NewsEvent],
         estimates: dict[str, EstimatesData],
+        group: list[SentimentResult] | None = None,
     ) -> TradeSignal | None:
         """Create a TradeSignal from a sentiment result and market snapshot.
 
@@ -257,8 +333,9 @@ class SignalGeneratorAgent(BaseAgent):
         # Dispatch EARN_* event types to dedicated two-stage handlers.
         match event_type:
             case EventType.EARN_PRE:
-                return self._handle_earn_pre(
-                    sentiment, market_ctx, news_event, estimates
+                return await self._handle_earn_pre(
+                    sentiment, market_ctx, news_event, estimates,
+                    group or [sentiment], event_lookup,
                 )
             case EventType.EARN_BEAT | EventType.EARN_MISS:
                 return self._handle_earn_post(
@@ -325,37 +402,95 @@ class SignalGeneratorAgent(BaseAgent):
     # EARN_* two-stage handlers
     # ------------------------------------------------------------------
 
-    def _handle_earn_pre(
+    async def _run_thesis_debate(
+        self,
+        ticker: str,
+        days_until_report: int,
+        fiscal_quarter: str,
+        beat_rate: float,
+        beat_rate_source: str,
+        news_summaries: list[str],
+        eps_estimate: float | None,
+    ) -> _ThesisVerdictSchema:
+        """Run parallel bull/bear debate then synthesis for an EARN_PRE ticker."""
+        bull_resp, bear_resp = await asyncio.gather(
+            self._llm.quick.invoke(
+                _build_thesis_bull_prompt(
+                    ticker,
+                    fiscal_quarter,
+                    days_until_report,
+                    beat_rate,
+                    beat_rate_source,
+                    eps_estimate,
+                    news_summaries,
+                )
+            ),
+            self._llm.quick.invoke(
+                _build_thesis_bear_prompt(
+                    ticker,
+                    fiscal_quarter,
+                    days_until_report,
+                    beat_rate,
+                    beat_rate_source,
+                    eps_estimate,
+                    news_summaries,
+                )
+            ),
+        )
+        verdict_resp = await self._llm.deep.invoke(
+            _build_thesis_synthesis_prompt(
+                ticker,
+                fiscal_quarter,
+                days_until_report,
+                bull_resp.content,
+                bear_resp.content,
+            ),
+            response_schema=_ThesisVerdictSchema,
+        )
+        return _ThesisVerdictSchema.model_validate(json.loads(verdict_resp.content))
+
+    async def _handle_earn_pre(
         self,
         sentiment: SentimentResult,
         market_ctx: MarketSnapshot,
         news_event: NewsEvent | None,
         estimates: dict[str, EstimatesData],
+        group: list[SentimentResult],
+        event_lookup: dict[str, NewsEvent],
     ) -> TradeSignal | None:
-        """Stage 1: pre-earnings positioning 2-5 days before the report.
+        """Stage 1: pre-earnings thesis-debate positioning before the report.
 
-        Sizes from the historical beat rate: long when beat_rate >= 0.60,
-        short otherwise.  Skips when beat_rate is outside [0.55, 0.85].
-        Persists an OpenStage1Position to SQLite so Stage 2 can confirm/reverse.
+        Runs a 3-LLM bull/bear debate (Bull + Bear in parallel, then Synthesis)
+        to determine direction (LONG/SHORT/NEUTRAL) and conviction.  Beat rate
+        is used as context for the debaters, not as a gate.  The debate is skipped
+        (cost guard) when an open position already exists and no new non-ephemeral
+        news is present in the group.
         """
         ticker = sentiment.ticker
         source = news_event.source if news_event else "unknown"
 
-        # Guard: skip if an OPEN Stage 1 position already exists for this ticker.
-        # EarningsTickerNode synthesises EARN_PRE events every cycle; without this guard
-        # a new Stage1 position would be created on every pipeline cycle.
+        # Step 1 — load any existing open Stage 1 position.
         existing = self._stage1_repo.load_open(ticker)
-        if existing is not None:
-            self.logger.info(
-                "EARN_PRE skipped for %s — Stage 1 position already OPEN (id=%s)",
+
+        # Step 2 — detect new (non-ephemeral) news in the group.
+        new_news_present = any(
+            not sr.event_id.startswith("ticker_earn_pre_") for sr in group
+        )
+
+        # Step 3 — cost guard: skip debate when position exists and no new news.
+        if existing is not None and not new_news_present:
+            self.logger.debug(
+                "EARN_PRE %s: existing Stage1 id=%s, no new news — skipping debate",
                 ticker,
                 existing.id,
             )
             return None
 
+        # Step 4 — three-tier beat rate fallback (context for the debaters).
         outcomes = self._stage1_repo.load_historical_outcomes(ticker)
         if outcomes.source == "observed" and outcomes.beat_rate is not None:
             beat_rate = outcomes.beat_rate
+            beat_rate_source = "observed"
         else:
             ticker_estimates = estimates.get(ticker)
             fmp_rate = (
@@ -365,39 +500,119 @@ class SignalGeneratorAgent(BaseAgent):
             )
             if fmp_rate is not None:
                 beat_rate = fmp_rate
-                self.logger.info(
-                    "EARN_PRE %s: using FMP historical beat_rate=%.2f "
-                    "(observed sample too small: %d quarters)",
-                    ticker,
-                    beat_rate,
-                    outcomes.sample_size,
-                )
+                beat_rate_source = "fmp"
             else:
                 beat_rate = self.settings.earn_default_beat_rate
-                self.logger.info(
-                    "EARN_PRE %s: insufficient observed history (%d samples), "
-                    "no FMP data — using default beat_rate=%.2f",
-                    ticker,
-                    outcomes.sample_size,
-                    beat_rate,
-                )
+                beat_rate_source = "default"
 
-        if beat_rate < _BEAT_RATE_MIN or beat_rate > _BEAT_RATE_MAX:
+        # Step 5 — build news_summaries (top-5 by conviction x decay, descending).
+        now = datetime.now(UTC)
+        halflife = self.settings.article_decay_halflife_hours
+
+        def _sr_weight(sr: SentimentResult) -> float:
+            ev = event_lookup.get(sr.event_id)
+            published_at = ev.published_at if ev else None
+            return sr.confidence * _decay_weight(published_at, now, halflife)
+
+        sorted_group = sorted(group, key=_sr_weight, reverse=True)
+        news_summaries = [sr.reasoning for sr in sorted_group[:5] if sr.reasoning]
+
+        # Step 6 — resolve calendar fields.
+        report_date, fiscal_quarter = _parse_calendar_fields(
+            ticker, news_event, estimates
+        )
+        days_until_report = max(1, (report_date - date.today()).days)
+        ticker_estimates = estimates.get(ticker)
+        eps_estimate = ticker_estimates.eps_estimate if ticker_estimates else None
+
+        # Step 7 — run the thesis debate.
+        verdict = await self._run_thesis_debate(
+            ticker=ticker,
+            days_until_report=days_until_report,
+            fiscal_quarter=fiscal_quarter,
+            beat_rate=beat_rate,
+            beat_rate_source=beat_rate_source,
+            news_summaries=news_summaries,
+            eps_estimate=eps_estimate,
+        )
+        self.logger.info(
+            "EARN_PRE %s: thesis debate → direction=%s conviction=%.2f reasoning=%r",
+            ticker,
+            verdict.direction,
+            verdict.conviction,
+            verdict.reasoning,
+        )
+
+        # Step 8 — NEUTRAL verdict → no signal.
+        if verdict.direction == "NEUTRAL":
+            self.logger.info("EARN_PRE %s: NEUTRAL verdict — no signal", ticker)
+            return None
+
+        new_direction = (
+            SignalDirection.LONG
+            if verdict.direction == "LONG"
+            else SignalDirection.SHORT
+        )
+
+        # Step 9 — reaffirmation: existing position, same direction → hold.
+        if existing is not None and existing.direction == new_direction.value:
             self.logger.info(
-                "EARN_PRE %s: beat_rate=%.2f outside [%.2f, %.2f] — skipping",
+                "EARN_PRE %s: thesis reaffirms existing %s Stage1 id=%s — no action",
                 ticker,
-                beat_rate,
-                _BEAT_RATE_MIN,
-                _BEAT_RATE_MAX,
+                existing.direction,
+                existing.id,
             )
             return None
 
-        direction = (
-            SignalDirection.LONG
-            if beat_rate >= _BEAT_RATE_LONG_THRESHOLD
-            else SignalDirection.SHORT
+        # Step 10 — direction flip: existing position, opposite direction.
+        if existing is not None:
+            flip_threshold = self.settings.earn_thesis_flip_conviction_threshold
+            if verdict.conviction > flip_threshold:
+                self._stage1_repo.update_status(existing.id, Stage1Status.REVERSED)
+                self.logger.info(
+                    "EARN_PRE %s: flip conviction=%.2f > threshold=%.2f — "
+                    "REVERSED Stage1 id=%s, emitting CLOSE",
+                    ticker,
+                    verdict.conviction,
+                    flip_threshold,
+                    existing.id,
+                )
+                return TradeSignal(
+                    signal_id=str(uuid4()),
+                    event_id=sentiment.event_id,
+                    ticker=ticker,
+                    direction=SignalDirection.CLOSE,
+                    conviction=1.0,
+                    suggested_qty=0,
+                    entry_price=None,
+                    stop_loss=None,
+                    take_profit=None,
+                    stage1_id=existing.id,
+                    passed_confidence_gate=True,
+                    rationale=f"EARN_PRE thesis flip: {verdict.reasoning}",
+                    model_id=self._llm.deep.model_id,
+                    provider=self._llm.deep.provider,
+                )
+            else:
+                self.logger.info(
+                    "EARN_PRE %s: flip conviction=%.2f <= threshold=%.2f — "
+                    "keeping existing Stage1 id=%s",
+                    ticker,
+                    verdict.conviction,
+                    flip_threshold,
+                    existing.id,
+                )
+                return None
+
+        # Step 11 — open new position.
+        entry_price = market_ctx.latest_close
+        stop_loss = (
+            entry_price * (1 - _EARN_PRE_STOP_PCT)
+            if new_direction == SignalDirection.LONG
+            else entry_price * (1 + _EARN_PRE_STOP_PCT)
         )
-        size_pct = min(
+
+        base_size = min(
             max(
                 _EARN_PRE_SIZE_MIN
                 + (beat_rate - _BEAT_RATE_LONG_THRESHOLD)
@@ -407,22 +622,15 @@ class SignalGeneratorAgent(BaseAgent):
             ),
             _EARN_PRE_SIZE_MAX,
         )
-
-        entry_price = market_ctx.latest_close
-        if direction == SignalDirection.LONG:
-            stop_loss = entry_price * (1 - _EARN_PRE_STOP_PCT)
-        else:
-            stop_loss = entry_price * (1 + _EARN_PRE_STOP_PCT)
-
-        # Resolve report_date and fiscal_quarter from estimates or headline.
-        report_date, fiscal_quarter = _parse_calendar_fields(
-            ticker, news_event, estimates
+        size_pct = min(
+            max(base_size * max(verdict.conviction, 0.25), _EARN_PRE_SIZE_MIN),
+            _EARN_PRE_SIZE_MAX,
         )
 
         position = OpenStage1Position(
             id=str(uuid4()),
             ticker=ticker,
-            direction=direction.value,
+            direction=new_direction.value,
             size_pct=size_pct,
             entry_price=entry_price,
             opened_at=datetime.utcnow(),
@@ -433,16 +641,18 @@ class SignalGeneratorAgent(BaseAgent):
         self._stage1_repo.persist(position)
         self.logger.info(
             "EARN_PRE %s: persisted Stage1 id=%s direction=%s size_pct=%.2f "
-            "beat_rate=%.2f report=%s",
+            "beat_rate=%.2f (%s) report=%s conviction=%.2f",
             ticker,
             position.id,
-            direction.value,
+            new_direction.value,
             size_pct,
             beat_rate,
+            beat_rate_source,
             report_date,
+            verdict.conviction,
         )
 
-        conviction = abs(sentiment.score) * sentiment.confidence
+        conviction = verdict.conviction
         suggested_qty = self._compute_position_size(
             ticker, conviction, market_ctx.volatility_20d
         )
@@ -450,7 +660,7 @@ class SignalGeneratorAgent(BaseAgent):
             signal_id=str(uuid4()),
             event_id=sentiment.event_id,
             ticker=ticker,
-            direction=direction,
+            direction=new_direction,
             conviction=conviction,
             suggested_qty=suggested_qty,
             entry_price=None,
@@ -458,11 +668,11 @@ class SignalGeneratorAgent(BaseAgent):
             take_profit=None,
             stage1_id=position.id,
             rationale=(
-                f"EARN_PRE: beat_rate={beat_rate:.2f} size_pct={size_pct:.2f} "
-                f"report={report_date}"
+                f"EARN_PRE thesis: {verdict.direction} conviction={conviction:.2f} "
+                f"beat_rate={beat_rate:.2f} ({beat_rate_source}) report={report_date}"
             ),
-            model_id=self._llm.quick.model_id,
-            provider=self._llm.quick.provider,
+            model_id=self._llm.deep.model_id,
+            provider=self._llm.deep.provider,
         )
         score = self._scorer.score(
             event_type=EventType.EARN_PRE,
