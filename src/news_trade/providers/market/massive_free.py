@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from news_trade.models.market import MarketSnapshot, OHLCVBar
+from news_trade.providers._http import http_get_with_retry
 
 _logger = logging.getLogger(__name__)
 _AGGS_URL = "https://api.massive.com/v2/aggs/ticker/{ticker}/range/1/day/{from_}/{to}"
@@ -43,8 +44,7 @@ class MassiveFreeMarketProvider:
         }
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
+            resp = await http_get_with_retry(client, url, params=params)
             data = resp.json()
 
         results = data.get("results") or []
@@ -95,9 +95,10 @@ class MassiveFreeMarketProvider:
 
 def _compute_volatility(bars: list[OHLCVBar]) -> float:
     closes = [b.close for b in bars]
-    if len(closes) < 2:
-        return 0.0
     log_returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+    # Sample variance requires at least 2 log returns (3 bars); return 0 for thin data.
+    if len(log_returns) < 2:
+        return 0.0
     n = len(log_returns)
     mean = sum(log_returns) / n
     variance = sum((r - mean) ** 2 for r in log_returns) / (n - 1)

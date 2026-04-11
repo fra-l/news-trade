@@ -61,7 +61,8 @@ All provider methods are `async`. Test mocks implement only the methods the test
 | Calendar | `calendar/finnhub.py` | `FinnhubCalendarProvider` | Free | `FINNHUB_API_KEY` |
 | Calendar | `calendar/fmp.py` | `FMPCalendarProvider` | Free (250 req/day) | `FMP_API_KEY` |
 | Calendar | `calendar/yfinance_provider.py` | `YFinanceCalendarProvider` | Free | — |
-| Estimates | `estimates/fmp.py` | `FMPEstimatesProvider` | Free (250 req/day) | `FMP_API_KEY` |
+| Estimates | `estimates/finnhub.py` | `FinnhubEstimatesProvider` | Free | `FINNHUB_API_KEY` |
+| Estimates | `estimates/fmp.py` | `FMPEstimatesProvider` | Paid | `FMP_API_KEY` |
 
 `ClaudeSentimentProvider` injects a full `LLMClientFactory` and selects the LLM tier per
 event inside `_select_client()`:
@@ -106,9 +107,11 @@ on the free tier.
 `YFinanceCalendarProvider` requires explicit tickers and cannot do a broad scan
 — always pass at least a fallback list when using yfinance.
 
-`get_estimates_provider` returns `FMPEstimatesProvider` when `settings.fmp_api_key` is set,
-or `None` when no key is present. Callers must handle `None` gracefully (fall back to
-`earn_default_beat_rate`).
+``get_estimates_provider` priority: **Finnhub (free) → FMP (paid) → None**.
+`FinnhubEstimatesProvider` is preferred because it uses the free-tier `/stock/eps-surprise`
+endpoint via httpx + `http_get_with_retry` (no extra dependency). `FMPEstimatesProvider`
+requires a paid FMP plan; it is retained as a fallback.
+Callers must handle `None` gracefully (fall back to `earn_default_beat_rate`).
 
 Selection is driven by `settings.news_provider`, `settings.market_data_provider`,
 and `settings.sentiment_provider` (enum fields in `config.py`).
@@ -143,3 +146,27 @@ mock_provider.name = "mock"
 
 No inheritance from the Protocol class required — Python's structural subtyping
 means the mock satisfies the Protocol at runtime as long as it has the right methods.
+
+---
+
+## HTTP Retry Utility (`_http.py`)
+
+`http_get_with_retry(client, url, *, params, max_retries=3)` wraps `httpx.AsyncClient.get`
+with exponential-backoff retry on rate-limit and transient errors:
+
+| Status | Behaviour |
+|---|---|
+| 429 / 503 / 504 | Retry with backoff: 1 s → 2 s → 4 s → raise `HTTPStatusError` |
+| `Retry-After` header present | Use header value (seconds) instead of computed delay |
+| Any other 4xx / 5xx | Raise `HTTPStatusError` immediately (no retry) |
+| 2xx | Return `httpx.Response` |
+
+**Applied to:** `market/massive_free.py`, `market/massive_paid.py`, `market/finnhub.py`,
+`calendar/finnhub.py` (both `_broad_scan` and `_per_ticker_scan`).
+
+When adding a new provider that uses `httpx`, replace the bare
+`resp = await client.get(...) / resp.raise_for_status()` pattern with
+`resp = await http_get_with_retry(client, url, params=params)`.
+
+Stress tests live in `tests/test_rate_limiting.py`. Mock `asyncio.sleep` via
+`patch("news_trade.providers._http.asyncio.sleep")` to avoid real waits in tests.

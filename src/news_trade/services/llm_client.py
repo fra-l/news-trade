@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Protocol, runtime_checkable
 
 import anthropic
@@ -214,6 +215,12 @@ def _extract_openai_content(
         tool_calls = getattr(choice.message, "tool_calls", None)
         if tool_calls:
             return str(tool_calls[0].function.arguments)  # raw JSON string
+        # Fallback: try to extract the first JSON object from plain-text content.
+        text = choice.message.content or ""
+        match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
+        if match:
+            _logger.debug("Ollama tool_call missing — extracted JSON from text")
+            return match.group()
         _logger.warning("No tool_call found in structured Ollama response")
         return "{}"
     return choice.message.content or ""

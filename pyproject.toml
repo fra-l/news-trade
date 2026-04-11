@@ -22,6 +22,7 @@ dependencies = [
     "python-telegram-bot[ext]>=20.0,<22",
     "yfinance>=0.2,<1",
     "pandas>=2.0,<3",
+    "aiohttp>=3.13.5",
 ]
 
 [project.scripts]

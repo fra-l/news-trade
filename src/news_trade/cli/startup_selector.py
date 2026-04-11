@@ -73,14 +73,21 @@ class StartupSelector:
         deduped = list(unique.values())
 
         logger.info("Fetching market cap for %d tickers…", len(deduped))
-        cap_map = await self._fetch_market_caps([e.ticker for e in deduped])
+        info_map = await self._fetch_ticker_info([e.ticker for e in deduped])
 
         ceiling = self._settings.small_cap_max_market_cap_usd
+        floor = self._settings.small_cap_min_price_usd
         result: list[tuple[EarningsCalendarEntry, int | None]] = []
         for entry in deduped:
-            cap = cap_map.get(entry.ticker)
+            cap, price = info_map.get(entry.ticker, (None, None))
             if cap is not None and cap > ceiling:
                 continue  # too large — exclude
+            if price is not None and price < floor:
+                logger.debug(
+                    "Skipping %s: price $%.2f below floor $%.2f",
+                    entry.ticker, price, floor,
+                )
+                continue  # penny stock — exclude
             result.append((entry, cap))
 
         result.sort(key=lambda t: t[0].report_date)
@@ -176,18 +183,20 @@ class StartupSelector:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _fetch_market_caps(self, tickers: list[str]) -> dict[str, int | None]:
-        """Fetch market cap for each ticker concurrently via yfinance."""
+    async def _fetch_ticker_info(
+        self, tickers: list[str]
+    ) -> dict[str, tuple[int | None, float | None]]:
+        """Fetch market cap and price for each ticker concurrently via yfinance."""
         sem = asyncio.Semaphore(_MARKET_CAP_CONCURRENCY)
 
-        async def _one(ticker: str) -> tuple[str, int | None]:
+        async def _one(ticker: str) -> tuple[str, tuple[int | None, float | None]]:
             async with sem:
                 try:
-                    cap = await asyncio.to_thread(_get_market_cap, ticker)
-                    return ticker, cap
+                    info = await asyncio.to_thread(_get_ticker_info, ticker)
+                    return ticker, info
                 except Exception as exc:
-                    logger.debug("market cap lookup failed for %s: %s", ticker, exc)
-                    return ticker, None
+                    logger.debug("ticker info lookup failed for %s: %s", ticker, exc)
+                    return ticker, (None, None)
 
         results = await asyncio.gather(*[_one(t) for t in tickers])
         return dict(results)
@@ -198,13 +207,14 @@ class StartupSelector:
 # ---------------------------------------------------------------------------
 
 
-def _get_market_cap(ticker: str) -> int | None:
-    """Synchronous yfinance market-cap lookup (runs in a thread pool)."""
+def _get_ticker_info(ticker: str) -> tuple[int | None, float | None]:
+    """Synchronous yfinance lookup for market cap and price (runs in a thread pool)."""
     info = yf.Ticker(ticker).info
     cap = info.get("marketCap")
-    if cap is None:
-        return None
-    return int(cap)
+    price = info.get("currentPrice") or info.get("regularMarketPrice")
+    cap_int = int(cap) if cap is not None else None
+    price_float = float(price) if price is not None else None
+    return cap_int, price_float
 
 
 def _auto_select(

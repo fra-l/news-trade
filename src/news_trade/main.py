@@ -328,14 +328,49 @@ async def main(
     )
 
     logger.info("Seeding earnings calendar DB at startup …")
+    # _estimates_ref holds the most recent EstimatesData dict produced by
+    # EarningsCalendarAgent.  It is written once at startup and refreshed by
+    # the 07:00 ET cron; every pipeline cycle seeds initial_state with it so
+    # SentimentAnalystAgent and SignalGeneratorAgent always have estimates context.
+    _estimates_ref: dict = {}
     try:
         _cal_result = await earnings_agent.run({})
+        _estimates_ref = _cal_result.get("estimates") or {}
         logger.info(
-            "Startup calendar seed: %d EARN_PRE event(s) published",
+            "Startup calendar seed: %d EARN_PRE event(s) published, "
+            "%d ticker(s) with estimates",
             len(_cal_result.get("news_events", [])),
+            len(_estimates_ref),
         )
     except Exception as _exc:
         logger.warning("Startup calendar seed failed (non-fatal): %s", _exc)
+
+    async def _run_earnings_and_refresh(state: dict) -> dict:
+        """Cron wrapper: run the calendar agent and refresh the estimates cache."""
+        result = await earnings_agent.run(state)
+        new_estimates = result.get("estimates") or {}
+        if new_estimates:
+            _estimates_ref.clear()
+            _estimates_ref.update(new_estimates)
+            logger.info(
+                "Estimates cache refreshed: %d ticker(s)", len(_estimates_ref)
+            )
+        return result
+
+    # Replace the bare earnings_agent.run in the scheduler with the wrapper so
+    # the cache stays current after the 07:00 ET cron fires.
+    scheduler.reschedule_job("earnings_calendar", trigger=None)
+    scheduler.remove_job("earnings_calendar")
+    scheduler.add_job(
+        _run_earnings_and_refresh,
+        "cron",
+        args=[{}],
+        hour=7,
+        minute=0,
+        day_of_week="mon-fri",
+        misfire_grace_time=_MISFIRE_GRACE_SECS,
+        id="earnings_calendar",
+    )
 
     logger.info(
         "Starting news-trade loop  (tickers=%s, interval=%ds)",
@@ -360,9 +395,12 @@ async def main(
                 initial_state: PipelineState = {  # type: ignore[typeddict-item]
                     "news_events": replay_events,
                     "replay_mode": True,
+                    "estimates": _estimates_ref,
                 }
             else:
-                initial_state = {}  # type: ignore[typeddict-item]
+                initial_state = {  # type: ignore[typeddict-item]
+                    "estimates": _estimates_ref,
+                }
 
             last_state = await run_cycle(pipeline, initial_state)
             _state_ref["portfolio"] = last_state.get("portfolio")

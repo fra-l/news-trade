@@ -153,6 +153,7 @@ to `.env` before running.
 | `REDIS_URL` | `redis://localhost:6379/0` | Event bus |
 | `DATABASE_URL` | `sqlite:///data/trades.db` | Persistence |
 | `SMALL_CAP_MAX_MARKET_CAP_USD` | `2000000000` | Market-cap ceiling (USD) for small-cap filter at startup |
+| `SMALL_CAP_MIN_PRICE_USD` | `1.0` | Minimum stock price (USD) for startup ticker selection; filters out penny stocks |
 | `MAX_STARTUP_TICKERS` | `5` | Max tickers selected at startup (-1 = unlimited) |
 | `NEWS_PROVIDER` | `rss` | `rss` or `benzinga` |
 | `MARKET_DATA_PROVIDER` | `yfinance` | `yfinance`, `massive_free`, `massive_paid`, `finnhub` |

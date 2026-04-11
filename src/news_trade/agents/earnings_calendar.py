@@ -8,6 +8,7 @@ the synthesised events so callers can inspect or chain them.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
@@ -94,6 +95,15 @@ class EarningsCalendarAgent(BaseAgent):
                         "EstimatesProvider failed for %s: %s", entry.ticker, exc
                     )
             estimates[entry.ticker] = est
+
+        # Populate num_analysts from yfinance for all tickers that have estimates
+        if estimates:
+            analyst_counts = await _fetch_analyst_counts(list(estimates))
+            for ticker, count in analyst_counts.items():
+                if ticker in estimates and count > 0:
+                    estimates[ticker] = estimates[ticker].model_copy(
+                        update={"num_analysts": count}
+                    )
 
         with Session(self._engine) as session:
             for entry in actionable:
@@ -237,3 +247,34 @@ def _synthesise_event(entry: EarningsCalendarEntry) -> NewsEvent:
         event_type=EventType.EARN_PRE,
         published_at=datetime.utcnow(),
     )
+
+
+# ---------------------------------------------------------------------------
+# yfinance analyst-count helper
+# ---------------------------------------------------------------------------
+
+_NUM_ANALYSTS_CONCURRENCY = 10
+
+
+async def _fetch_analyst_counts(tickers: list[str]) -> dict[str, int]:
+    """Fetch ``numberOfAnalystOpinions`` for each ticker via yfinance (concurrent).
+
+    Failures return 0 — the caller treats 0 as "unknown" and leaves ``num_analysts``
+    at its default rather than crashing the pipeline.
+    """
+    import yfinance as yf  # type: ignore[import-untyped]  # lazy import
+
+    sem = asyncio.Semaphore(_NUM_ANALYSTS_CONCURRENCY)
+
+    async def _one(ticker: str) -> tuple[str, int]:
+        async with sem:
+            try:
+                info: dict = await asyncio.to_thread(
+                    lambda t=ticker: yf.Ticker(t).info
+                )
+                count = info.get("numberOfAnalystOpinions") or 0
+                return ticker, int(count)
+            except Exception:
+                return ticker, 0
+
+    return dict(await asyncio.gather(*(_one(t) for t in tickers)))

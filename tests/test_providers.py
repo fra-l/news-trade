@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -36,7 +36,9 @@ def _make_settings(**kwargs) -> Settings:
         alpaca_api_key="test",
         alpaca_secret_key="test",
     )
-    return Settings(**(defaults | kwargs))
+    # _env_file=None prevents the project .env from overriding class defaults,
+    # keeping these tests independent of the local developer configuration.
+    return Settings(_env_file=None, **(defaults | kwargs))
 
 
 def _make_event(event_id: str = "ev-1", ticker: str = "AAPL") -> NewsEvent:
@@ -600,3 +602,77 @@ class TestConcurrentAnalyseBatch:
         provider, _, _ = _make_provider()
         results = await provider.analyse_batch([])
         assert results == []
+
+
+# ---------------------------------------------------------------------------
+# FinnhubCalendarProvider — per-ticker warning on empty response
+# ---------------------------------------------------------------------------
+
+
+class TestFinnhubCalendarProviderPerTickerWarning:
+    """_per_ticker_scan emits WARNING when Finnhub returns an empty calendar."""
+
+    async def test_warns_when_per_ticker_returns_empty(self, caplog) -> None:
+        from news_trade.providers.calendar.finnhub import FinnhubCalendarProvider
+
+        provider = FinnhubCalendarProvider(api_key="test-key")
+        from_d = date(2026, 4, 11)
+        to_d = date(2026, 4, 25)
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"earningsCalendar": []}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            import logging
+
+            with caplog.at_level(logging.WARNING):
+                result = await provider._per_ticker_scan(["NFTM", "NNAX"], from_d, to_d)
+
+        assert result == []
+        warned = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("NFTM" in m for m in warned)
+        assert any("NNAX" in m for m in warned)
+
+    async def test_no_warning_when_per_ticker_returns_entries(self, caplog) -> None:
+        from news_trade.providers.calendar.finnhub import FinnhubCalendarProvider
+
+        provider = FinnhubCalendarProvider(api_key="test-key")
+        from_d = date(2026, 4, 11)
+        to_d = date(2026, 4, 25)
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "earningsCalendar": [
+                {
+                    "symbol": "SPND",
+                    "date": "2026-04-14",
+                    "hour": "bmo",
+                    "quarter": 1,
+                    "year": 2026,
+                    "epsEstimate": 0.42,
+                }
+            ]
+        }
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            import logging
+
+            with caplog.at_level(logging.WARNING):
+                result = await provider._per_ticker_scan(["SPND"], from_d, to_d)
+
+        assert len(result) == 1
+        assert result[0].ticker == "SPND"
+        warned = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("SPND" in m for m in warned)

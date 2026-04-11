@@ -89,12 +89,17 @@ def get_sentiment_provider(settings: Settings | None = None) -> SentimentProvide
 def get_estimates_provider(
     settings: Settings | None = None,
 ) -> EstimatesProvider | None:
-    """Return an FMPEstimatesProvider when an FMP API key is configured.
+    """Return an estimates provider when a supported API key is configured.
+
+    Priority: Finnhub (free tier) → FMP (paid) → None.
 
     Returns ``None`` when no key is set so callers fall back to the static
     ``earn_default_beat_rate`` without raising.
     """
     cfg = settings or get_settings()
+    if cfg.finnhub_api_key:
+        from news_trade.providers.estimates.finnhub import FinnhubEstimatesProvider
+        return FinnhubEstimatesProvider(api_key=cfg.finnhub_api_key)
     if cfg.fmp_api_key:
         from news_trade.providers.estimates.fmp import FMPEstimatesProvider
         return FMPEstimatesProvider(api_key=cfg.fmp_api_key)

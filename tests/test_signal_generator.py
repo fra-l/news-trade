@@ -12,7 +12,9 @@ import pytest
 from news_trade.agents.signal_generator import (
     SignalGeneratorAgent,
     _aggregate_ticker_group,
+    _build_thesis_bull_prompt,
     _decay_weight,
+    _fetch_company_snapshot,
     _parse_calendar_fields,
     _ThesisVerdictSchema,
 )
@@ -1485,3 +1487,123 @@ class TestRunThesisDebate:
         )
         assert result is None
         self.agent._run_thesis_debate.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestBuildThesisPrompts — prompt builder company_context injection
+# ---------------------------------------------------------------------------
+
+
+class TestBuildThesisPrompts:
+    def test_build_thesis_bull_prompt_includes_company_context(self):
+        ctx = "Company snapshot (ALOT):\n  Price: $5.42 | 52-week: 12.3%"
+        result = _build_thesis_bull_prompt(
+            ticker="ALOT",
+            fiscal_quarter="Q2 2026",
+            days_until_report=3,
+            beat_rate=0.65,
+            beat_rate_source="default",
+            eps_estimate=0.12,
+            news_summaries=["Revenue outlook positive."],
+            company_context=ctx,
+        )
+        assert ctx in result
+
+    def test_build_thesis_bull_prompt_without_context_omits_block(self):
+        result = _build_thesis_bull_prompt(
+            ticker="ALOT",
+            fiscal_quarter="Q2 2026",
+            days_until_report=3,
+            beat_rate=0.65,
+            beat_rate_source="default",
+            eps_estimate=None,
+            news_summaries=[],
+        )
+        assert "Company snapshot" not in result
+
+
+# ---------------------------------------------------------------------------
+# TestFetchCompanySnapshot — yfinance helper
+# ---------------------------------------------------------------------------
+
+
+class TestFetchCompanySnapshot:
+    def test_returns_empty_on_yfinance_error(self):
+        from unittest.mock import patch
+
+        with patch("yfinance.Ticker", side_effect=Exception("network error")):
+            result = _fetch_company_snapshot("X")
+
+        assert result == ""
+
+    def test_returns_empty_when_info_raises(self):
+        from unittest.mock import MagicMock, PropertyMock, patch
+
+        mock_ticker = MagicMock()
+        type(mock_ticker).info = PropertyMock(side_effect=Exception("timeout"))
+
+        with patch("yfinance.Ticker", return_value=mock_ticker):
+            result = _fetch_company_snapshot("X")
+
+        assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# TestRunThesisDebateContextPropagation
+# ---------------------------------------------------------------------------
+
+
+class TestRunThesisDebateContextPropagation:
+    def setup_method(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from news_trade.services.llm_client import LLMResponse
+
+        self.agent = _make_earn_agent(beat_rate=0.72)
+        # Replace the MagicMock LLMs with proper AsyncMocks so invoke() is awaitable.
+        quick_response = LLMResponse(
+            content="Bullish because growth momentum.",
+            model_id="claude-haiku-4-5-20251001",
+            provider="anthropic",
+        )
+        deep_response = LLMResponse(
+            content='{"direction": "LONG", "conviction": 0.78, "reasoning": "good"}',
+            model_id="claude-sonnet-4-6",
+            provider="anthropic",
+        )
+        self.agent._llm.quick.invoke = AsyncMock(return_value=quick_response)
+        self.agent._llm.deep.invoke = AsyncMock(return_value=deep_response)
+
+    async def test_company_context_appears_in_quick_invoke_prompt(self):
+        ctx = "Company snapshot (TEST):\n  Price: $42.00 | 52-week: 5.0%"
+        await self.agent._run_thesis_debate(
+            ticker="TEST",
+            days_until_report=4,
+            fiscal_quarter="Q3 2026",
+            beat_rate=0.72,
+            beat_rate_source="observed",
+            news_summaries=["Strong demand.", "Margins expanding."],
+            eps_estimate=1.25,
+            company_context=ctx,
+        )
+        # quick.invoke is called twice (bull + bear); both should contain the context.
+        call_args_list = self.agent._llm.quick.invoke.call_args_list
+        assert len(call_args_list) == 2
+        for call in call_args_list:
+            prompt = call.args[0]
+            assert ctx in prompt
+
+    async def test_no_context_does_not_inject_snapshot_block(self):
+        await self.agent._run_thesis_debate(
+            ticker="TEST",
+            days_until_report=4,
+            fiscal_quarter="Q3 2026",
+            beat_rate=0.72,
+            beat_rate_source="observed",
+            news_summaries=[],
+            eps_estimate=None,
+            company_context="",
+        )
+        for call in self.agent._llm.quick.invoke.call_args_list:
+            prompt = call.args[0]
+            assert "Company snapshot" not in prompt

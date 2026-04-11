@@ -24,6 +24,7 @@ from news_trade.models.calendar import EarningsCalendarEntry, ReportTiming
 def _make_settings(**kwargs: object) -> MagicMock:
     m = MagicMock()
     m.small_cap_max_market_cap_usd = 2_000_000_000
+    m.small_cap_min_price_usd = 1.0
     m.max_startup_tickers = 5
     for k, v in kwargs.items():
         setattr(m, k, v)
@@ -64,12 +65,15 @@ class TestFetchCandidates:
         provider = _make_provider(entries)
         selector = StartupSelector(settings, provider)
 
-        # SMALL has $500M cap, BIG has $5B cap
-        caps = {"SMALL": 500_000_000, "BIG": 5_000_000_000}
+        # SMALL has $500M cap, BIG has $5B cap; both above price floor
+        info: dict[str, tuple[int | None, float | None]] = {
+            "SMALL": (500_000_000, 5.00),
+            "BIG": (5_000_000_000, 50.00),
+        }
 
         to_date = date.today() + timedelta(days=14)
         with patch.object(
-            selector, "_fetch_market_caps", new=AsyncMock(return_value=caps)
+            selector, "_fetch_ticker_info", new=AsyncMock(return_value=info)
         ):
             result = await selector.fetch_candidates(date.today(), to_date)
 
@@ -77,16 +81,38 @@ class TestFetchCandidates:
         assert "SMALL" in tickers
         assert "BIG" not in tickers
 
-    async def test_includes_unknown_market_cap_entries(self):
+    async def test_excludes_penny_stocks_below_price_floor(self):
+        """Tickers with price below small_cap_min_price_usd are excluded."""
+        entries = [_make_entry("GOOD", days=3), _make_entry("PENNY", days=4)]
+        settings = _make_settings(small_cap_min_price_usd=1.0)
+        provider = _make_provider(entries)
+        selector = StartupSelector(settings, provider)
+
+        info: dict[str, tuple[int | None, float | None]] = {
+            "GOOD": (500_000_000, 5.00),
+            "PENNY": (10_000_000, 0.01),
+        }
+        to_date = date.today() + timedelta(days=14)
+        with patch.object(
+            selector, "_fetch_ticker_info", new=AsyncMock(return_value=info)
+        ):
+            result = await selector.fetch_candidates(date.today(), to_date)
+
+        tickers = [e.ticker for e, _ in result]
+        assert "GOOD" in tickers
+        assert "PENNY" not in tickers
+
+    async def test_includes_unknown_price_entries(self):
+        """Tickers with unknown price (None) are not filtered out."""
         entries = [_make_entry("UNK", days=2)]
         settings = _make_settings()
         provider = _make_provider(entries)
         selector = StartupSelector(settings, provider)
 
         to_date = date.today() + timedelta(days=14)
-        unk_caps: dict[str, int | None] = {"UNK": None}
+        info: dict[str, tuple[int | None, float | None]] = {"UNK": (None, None)}
         with patch.object(
-            selector, "_fetch_market_caps", new=AsyncMock(return_value=unk_caps)
+            selector, "_fetch_ticker_info", new=AsyncMock(return_value=info)
         ):
             result = await selector.fetch_candidates(date.today(), to_date)
 
@@ -102,10 +128,12 @@ class TestFetchCandidates:
         provider = _make_provider(entries)
         selector = StartupSelector(settings, provider)
 
-        caps = {"A": 0, "B": 0, "C": 0}
+        info: dict[str, tuple[int | None, float | None]] = {
+            "A": (0, 5.0), "B": (0, 5.0), "C": (0, 5.0),
+        }
         to_date = date.today() + timedelta(days=14)
         with patch.object(
-            selector, "_fetch_market_caps", new=AsyncMock(return_value=caps)
+            selector, "_fetch_ticker_info", new=AsyncMock(return_value=info)
         ):
             result = await selector.fetch_candidates(date.today(), to_date)
 
@@ -121,9 +149,11 @@ class TestFetchCandidates:
         selector = StartupSelector(settings, provider)
 
         to_date = date.today() + timedelta(days=14)
-        caps = {"AAPL": 500_000_000}
+        info: dict[str, tuple[int | None, float | None]] = {
+            "AAPL": (500_000_000, 185.0)
+        }
         with patch.object(
-            selector, "_fetch_market_caps", new=AsyncMock(return_value=caps)
+            selector, "_fetch_ticker_info", new=AsyncMock(return_value=info)
         ):
             result = await selector.fetch_candidates(date.today(), to_date)
 
@@ -153,6 +183,24 @@ class TestFetchCandidates:
         result = await selector.fetch_candidates(date.today(), to_date)
 
         assert result == []
+
+    async def test_includes_ticker_when_price_is_exactly_at_floor(self):
+        """Price exactly equal to the floor should pass (floor is a strict minimum)."""
+        entries = [_make_entry("ATFLOOR", days=3)]
+        settings = _make_settings(small_cap_min_price_usd=1.0)
+        provider = _make_provider(entries)
+        selector = StartupSelector(settings, provider)
+
+        info: dict[str, tuple[int | None, float | None]] = {
+            "ATFLOOR": (100_000_000, 1.0)
+        }
+        to_date = date.today() + timedelta(days=14)
+        with patch.object(
+            selector, "_fetch_ticker_info", new=AsyncMock(return_value=info)
+        ):
+            result = await selector.fetch_candidates(date.today(), to_date)
+
+        assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------

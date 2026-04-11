@@ -14,6 +14,7 @@ from datetime import date, datetime
 import httpx
 
 from news_trade.models.calendar import EarningsCalendarEntry, ReportTiming
+from news_trade.providers._http import http_get_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,8 @@ class FinnhubCalendarProvider:
         """Single request without symbol filter — returns all companies."""
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(
+                resp = await http_get_with_retry(
+                    client,
                     f"{_BASE_URL}/calendar/earnings",
                     params={
                         "from": str(from_date),
@@ -75,7 +77,6 @@ class FinnhubCalendarProvider:
                         "token": self._api_key,
                     },
                 )
-                resp.raise_for_status()
                 data = resp.json()
         except httpx.HTTPError as exc:
             logger.warning("Finnhub broad calendar scan failed: %s", exc)
@@ -101,7 +102,8 @@ class FinnhubCalendarProvider:
         async with httpx.AsyncClient(timeout=15.0) as client:
             for ticker in tickers:
                 try:
-                    resp = await client.get(
+                    resp = await http_get_with_retry(
+                        client,
                         f"{_BASE_URL}/calendar/earnings",
                         params={
                             "symbol": ticker,
@@ -110,16 +112,27 @@ class FinnhubCalendarProvider:
                             "token": self._api_key,
                         },
                     )
-                    resp.raise_for_status()
                     data = resp.json()
-                    for item in data.get("earningsCalendar") or []:
-                        entry = _item_to_entry(item)
-                        if entry is not None:
-                            entries.append(entry)
+                    ticker_entries = [
+                        e
+                        for item in (data.get("earningsCalendar") or [])
+                        if (e := _item_to_entry(item)) is not None
+                    ]
+                    if not ticker_entries:
+                        logger.warning(
+                            "Finnhub per-ticker: no calendar entries for %s in %s -%s "
+                            "(ticker may lack Finnhub coverage or analyst estimates)",
+                            ticker, from_date, to_date,
+                        )
+                    entries.extend(ticker_entries)
                 except httpx.HTTPError as exc:
                     logger.warning(
                         "Finnhub calendar fetch failed for %s: %s", ticker, exc
                     )
+        logger.debug(
+            "Finnhub per-ticker scan: %d entries across %d ticker(s) (%s -%s)",
+            len(entries), len(tickers), from_date, to_date,
+        )
         return entries
 
 

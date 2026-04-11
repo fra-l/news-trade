@@ -14,9 +14,12 @@ from datetime import UTC, datetime
 import httpx
 
 from news_trade.models.market import MarketSnapshot, OHLCVBar
+from news_trade.providers._http import http_get_with_retry
 
 _logger = logging.getLogger(__name__)
 _CANDLE_URL = "https://finnhub.io/api/v1/stock/candle"
+# Bound concurrent candle requests — avoids thundering herd on 429 bursts.
+_SNAPSHOT_CONCURRENCY = 3
 
 
 class FinnhubMarketDataProvider:
@@ -44,8 +47,7 @@ class FinnhubMarketDataProvider:
         }
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(_CANDLE_URL, params=params)
-            resp.raise_for_status()
+            resp = await http_get_with_retry(client, _CANDLE_URL, params=params)
             data = resp.json()
 
         if data.get("s") != "ok":
@@ -89,14 +91,16 @@ class FinnhubMarketDataProvider:
         )
 
     async def get_snapshots(self, tickers: list[str]) -> dict[str, MarketSnapshot]:
-        """Batch-fetch snapshots concurrently."""
+        """Batch-fetch snapshots concurrently with bounded concurrency."""
+        sem = asyncio.Semaphore(_SNAPSHOT_CONCURRENCY)
 
         async def _safe(ticker: str) -> tuple[str, MarketSnapshot | None]:
-            try:
-                return ticker, await self.get_snapshot(ticker)
-            except Exception as exc:
-                _logger.warning("Finnhub snapshot failed for %s: %s", ticker, exc)
-                return ticker, None
+            async with sem:
+                try:
+                    return ticker, await self.get_snapshot(ticker)
+                except Exception as exc:
+                    _logger.warning("Finnhub snapshot failed for %s: %s", ticker, exc)
+                    return ticker, None
 
         pairs = await asyncio.gather(*(_safe(t) for t in tickers))
         return {ticker: snap for ticker, snap in pairs if snap is not None}
@@ -104,9 +108,10 @@ class FinnhubMarketDataProvider:
 
 def _compute_volatility(bars: list[OHLCVBar]) -> float:
     closes = [b.close for b in bars]
-    if len(closes) < 2:
-        return 0.0
     log_returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+    # Sample variance requires at least 2 log returns (3 bars); return 0 for thin data.
+    if len(log_returns) < 2:
+        return 0.0
     n = len(log_returns)
     mean = sum(log_returns) / n
     variance = sum((r - mean) ** 2 for r in log_returns) / (n - 1)

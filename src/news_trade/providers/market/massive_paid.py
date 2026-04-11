@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from news_trade.models.market import MarketSnapshot, OHLCVBar
+from news_trade.providers._http import http_get_with_retry
 
 _logger = logging.getLogger(__name__)
 _AGGS_URL = "https://api.massive.com/v2/aggs/ticker/{ticker}/range/1/day/{from_}/{to}"
@@ -46,8 +47,7 @@ class MassivePaidMarketProvider:
         }
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
+            resp = await http_get_with_retry(client, url, params=params)
             data = resp.json()
 
         results = data.get("results") or []
@@ -70,12 +70,11 @@ class MassivePaidMarketProvider:
 
         latest = bars[-1]
         closes = [b.close for b in bars]
-        log_returns = (
-            [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
-            if len(closes) > 1
-            else []
-        )
-        if log_returns:
+        log_returns = [
+            math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))
+        ]
+        # Sample variance requires ≥2 log returns (≥3 bars); return 0 for thin data.
+        if len(log_returns) >= 2:
             n = len(log_returns)
             mean = sum(log_returns) / n
             variance = sum((r - mean) ** 2 for r in log_returns) / (n - 1)

@@ -99,6 +99,13 @@ class Settings(BaseSettings):
         default=2_000_000_000,
         description="Market-cap ceiling (USD) for small-cap filter at startup",
     )
+    small_cap_min_price_usd: float = Field(
+        default=1.0,
+        description=(
+            "Minimum stock price (USD) for startup ticker selection;"
+            " filters out penny stocks with no analyst coverage"
+        ),
+    )
     max_startup_tickers: int = Field(
         default=5,
         description="Max tickers selected at startup (-1 = unlimited)",

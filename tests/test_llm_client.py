@@ -319,6 +319,27 @@ class TestOllamaLLMClientInvoke:
 
         assert result.content == "{}"
 
+    async def test_json_text_fallback_extracts_embedded_json(self, client, caplog):
+        """When tool_calls is absent but content contains JSON, extract it."""
+        import logging
+
+        class MySchema(BaseModel):
+            direction: str
+            conviction: float
+            reasoning: str
+
+        embedded = '{"direction":"LONG","conviction":0.7,"reasoning":"ok"}'
+        fake_response = _make_openai_response(f"Here is my answer: {embedded}")
+        mock_create = AsyncMock(return_value=fake_response)
+        with (
+            patch.object(client._client.chat.completions, "create", new=mock_create),
+            caplog.at_level(logging.WARNING, logger="news_trade.services.llm_client"),
+        ):
+            result = await client.invoke("prompt", response_schema=MySchema)
+
+        assert result.content == embedded
+        assert "No tool_call" not in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # _build_client

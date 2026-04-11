@@ -57,6 +57,61 @@ _MIXED_DIRECTION_THRESHOLD = 0.25
 
 
 # ---------------------------------------------------------------------------
+# yfinance company snapshot helper
+# ---------------------------------------------------------------------------
+
+
+def _fetch_company_snapshot(ticker: str) -> str:
+    """Compact yfinance fundamentals block for the thesis debate prompts.
+
+    Fetches .info synchronously (caller must use asyncio.to_thread).
+    Returns an empty string on any error — callers treat this as optional context.
+    """
+    import yfinance as yf  # type: ignore[import-untyped]
+
+    try:
+        info = yf.Ticker(ticker).info
+    except Exception:
+        return ""
+
+    def _pct(v: float | int | None) -> str:
+        return f"{v:.1%}" if v is not None else "N/A"
+
+    def _x(v: float | int | None) -> str:
+        return f"{v:.1f}x" if v is not None else "N/A"
+
+    def _f(v: float | int | None) -> str:
+        return f"{v:.2f}" if v is not None else "N/A"
+
+    rec = info.get("recommendationMean")
+    rec_str = f"{rec:.1f}/5 (1=Strong Buy)" if rec is not None else "N/A"
+
+    price = _f(info.get("currentPrice"))
+    wk52 = _pct(info.get("52WeekChange"))
+    pe_t = _x(info.get("trailingPE"))
+    pe_f = _x(info.get("forwardPE"))
+    rev_g = _pct(info.get("revenueGrowth"))
+    ear_g = _pct(info.get("earningsGrowth"))
+    de = _x(info.get("debtToEquity"))
+    roe = _pct(info.get("returnOnEquity"))
+    inst = _pct(info.get("institutionOwnership"))
+    ins = _pct(info.get("insiderOwnership"))
+    short = _pct(info.get("shortPercentOfFloat"))
+    n_ana = info.get("numberOfAnalystOpinions", "N/A")
+    lines = [
+        f"Company snapshot ({ticker}):",
+        f"  Price: ${price} | 52-week: {wk52}",
+        f"  Valuation: P/E trailing {pe_t} / forward {pe_f}",
+        f"  Growth: Revenue {rev_g} YoY | Earnings {ear_g} YoY",
+        f"  Balance: D/E {de} | ROE {roe}",
+        f"  Ownership: Institutional {inst} | Insider {ins}",
+        f"  Short interest: {short} of float",
+        f"  Analyst consensus: {rec_str} ({n_ana} analysts)",
+    ]
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Internal schema for structured debate verdict output
 # ---------------------------------------------------------------------------
 
@@ -142,14 +197,17 @@ def _build_thesis_bull_prompt(
     beat_rate_source: str,
     eps_estimate: float | None,
     news_summaries: list[str],
+    company_context: str = "",
 ) -> str:
     news_block = "\n".join(f"- {s}" for s in news_summaries) or "No recent news."
     eps_str = f"{eps_estimate:.2f}" if eps_estimate is not None else "N/A"
+    ctx_section = f"\n{company_context}\n" if company_context else ""
     return (
         f"You are a bullish equity analyst. {ticker} reports {fiscal_quarter} "
         f"in {days_until_report} day(s).\n"
         f"Historical beat rate: {beat_rate:.0%} ({beat_rate_source}). "
         f"Consensus EPS estimate: {eps_str}.\n"
+        f"{ctx_section}"
         f"Recent news:\n{news_block}\n\n"
         "In 2-3 sentences, make the strongest possible LONG case for entering "
         "a pre-earnings position."
@@ -164,14 +222,17 @@ def _build_thesis_bear_prompt(
     beat_rate_source: str,
     eps_estimate: float | None,
     news_summaries: list[str],
+    company_context: str = "",
 ) -> str:
     news_block = "\n".join(f"- {s}" for s in news_summaries) or "No recent news."
     eps_str = f"{eps_estimate:.2f}" if eps_estimate is not None else "N/A"
+    ctx_section = f"\n{company_context}\n" if company_context else ""
     return (
         f"You are a bearish equity analyst. {ticker} reports {fiscal_quarter} "
         f"in {days_until_report} day(s).\n"
         f"Historical beat rate: {beat_rate:.0%} ({beat_rate_source}). "
         f"Consensus EPS estimate: {eps_str}.\n"
+        f"{ctx_section}"
         f"Recent news:\n{news_block}\n\n"
         "In 2-3 sentences, make the strongest possible SHORT case against "
         "a pre-earnings position (or for shorting)."
@@ -184,10 +245,13 @@ def _build_thesis_synthesis_prompt(
     days_until_report: int,
     bull_argument: str,
     bear_argument: str,
+    company_context: str = "",
 ) -> str:
+    ctx_section = f"\n{company_context}\n" if company_context else ""
     return (
         f"You are a senior portfolio manager deciding on a pre-earnings position "
-        f"for {ticker} ({fiscal_quarter}, reports in {days_until_report} day(s)).\n\n"
+        f"for {ticker} ({fiscal_quarter}, reports in {days_until_report} day(s))."
+        f"{ctx_section}\n"
         f"BULL case:\n{bull_argument}\n\n"
         f"BEAR case:\n{bear_argument}\n\n"
         "Decide: LONG (enter long), SHORT (enter short), or NEUTRAL (skip).\n"
@@ -270,12 +334,40 @@ class SignalGeneratorAgent(BaseAgent):
                 now,
             )
             if agg is None:
-                self.logger.info(
-                    "Signal: %-6s  %d article(s) → MIXED or all-neutral, no signal",
-                    ticker,
-                    len(group),
+                # For EARN_PRE the thesis debate drives direction regardless of
+                # sentiment label — allow neutral groups through to _handle_earn_pre.
+                earn_pre_sr = next(
+                    (
+                        sr
+                        for sr in group
+                        if event_lookup.get(sr.event_id) is not None
+                        and event_lookup[sr.event_id].event_type == EventType.EARN_PRE
+                    ),
+                    None,
                 )
-                continue
+                if earn_pre_sr is None:
+                    self.logger.info(
+                        "Signal: %-6s  %d article(s) → MIXED or all-neutral, no signal",
+                        ticker,
+                        len(group),
+                    )
+                    continue
+                # Synthesise a neutral sentinel so _build_signal can dispatch to
+                # _handle_earn_pre — the debate decides direction from there.
+                self.logger.debug(
+                    "EARN_PRE %s: all-neutral sentiment — forwarding to thesis debate",
+                    ticker,
+                )
+                agg = SentimentResult(
+                    event_id=earn_pre_sr.event_id,
+                    ticker=ticker,
+                    label=SentimentLabel.NEUTRAL,
+                    score=0.0,
+                    confidence=earn_pre_sr.confidence,
+                    reasoning=earn_pre_sr.reasoning,
+                    model_id=earn_pre_sr.model_id,
+                    provider=earn_pre_sr.provider,
+                )
 
             signal = await self._build_signal(
                 agg, market_ctx, event_lookup, estimates, group
@@ -411,6 +503,7 @@ class SignalGeneratorAgent(BaseAgent):
         beat_rate_source: str,
         news_summaries: list[str],
         eps_estimate: float | None,
+        company_context: str = "",
     ) -> _ThesisVerdictSchema:
         """Run parallel bull/bear debate then synthesis for an EARN_PRE ticker."""
         bull_resp, bear_resp = await asyncio.gather(
@@ -423,6 +516,7 @@ class SignalGeneratorAgent(BaseAgent):
                     beat_rate_source,
                     eps_estimate,
                     news_summaries,
+                    company_context,
                 )
             ),
             self._llm.quick.invoke(
@@ -434,6 +528,7 @@ class SignalGeneratorAgent(BaseAgent):
                     beat_rate_source,
                     eps_estimate,
                     news_summaries,
+                    company_context,
                 )
             ),
         )
@@ -444,6 +539,7 @@ class SignalGeneratorAgent(BaseAgent):
                 days_until_report,
                 bull_resp.content,
                 bear_resp.content,
+                company_context,
             ),
             response_schema=_ThesisVerdictSchema,
         )
@@ -525,6 +621,20 @@ class SignalGeneratorAgent(BaseAgent):
         ticker_estimates = estimates.get(ticker)
         eps_estimate = ticker_estimates.eps_estimate if ticker_estimates else None
 
+        # Step 6b — live company snapshot for debate context (best-effort).
+        company_context = await asyncio.to_thread(_fetch_company_snapshot, ticker)
+        if company_context:
+            self.logger.debug(
+                "EARN_PRE %s: company snapshot fetched (%d chars)",
+                ticker,
+                len(company_context),
+            )
+        else:
+            self.logger.debug(
+                "EARN_PRE %s: company snapshot unavailable, debate continues",
+                ticker,
+            )
+
         # Step 7 — run the thesis debate.
         verdict = await self._run_thesis_debate(
             ticker=ticker,
@@ -534,6 +644,7 @@ class SignalGeneratorAgent(BaseAgent):
             beat_rate_source=beat_rate_source,
             news_summaries=news_summaries,
             eps_estimate=eps_estimate,
+            company_context=company_context,
         )
         self.logger.info(
             "EARN_PRE %s: thesis debate → direction=%s conviction=%.2f reasoning=%r",

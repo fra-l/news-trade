@@ -33,6 +33,11 @@ factory.deep    # AnthropicLLMClient(sonnet) or OllamaLLMClient(llama3.1:8b) —
 non-earnings sentiment (M&A, guidance, macro, analyst ratings, EARN_MIXED).
 **Route to `deep`:** confidence scoring, debate verdict, EARN_PRE / EARN_BEAT / EARN_MISS sentiment.
 
+`OllamaLLMClient._extract_openai_content()` includes a regex fallback: when Ollama returns
+prose instead of a `tool_call`, the first `{...}` JSON object is extracted from the text
+content before logging a warning and returning `"{}"`. This handles models that occasionally
+respond in prose even when function calling is requested.
+
 `LLMClient.invoke()` is `async`. Pass `response_schema=MyModel` to get structured JSON output.
 - **Anthropic** uses tool-use to force the schema.
 - **Ollama** uses OpenAI-compatible function calling (`tools` + `tool_choice`) via the `openai` SDK

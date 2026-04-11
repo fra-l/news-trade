@@ -159,7 +159,7 @@ Accepts `llm: LLMClientFactory` and `scorer: ConfidenceScorer` at construction t
 | `_compute_position_size(ticker, conviction, volatility)` | Volatility-adjusted heuristic: `max(1, int(conviction / max(vol, 0.01) * 10))` |
 | `_compute_stop_loss(entry, volatility, direction)` | 2× daily vol proxy offset from entry; LONG → below, SHORT → above |
 | `_debate_signal(signal)` | Bull/bear debate gate — skips if `signal_debate_rounds=0` or below `signal_debate_threshold`; applies CONFIRM/REDUCE/REJECT verdict. NOT called for EARN_PRE (thesis debate runs instead). |
-| `_run_thesis_debate(ticker, days_until_report, fiscal_quarter, beat_rate, beat_rate_source, news_summaries, eps_estimate)` | async; runs Bull LLM + Bear LLM in parallel (quick model), then Synthesis LLM (deep model, structured output); returns `_ThesisVerdictSchema(direction, conviction, reasoning)` |
+| `_run_thesis_debate(ticker, days_until_report, fiscal_quarter, beat_rate, beat_rate_source, news_summaries, eps_estimate, company_context="")` | async; runs Bull LLM + Bear LLM in parallel (quick model), then Synthesis LLM (deep model, structured output); returns `_ThesisVerdictSchema(direction, conviction, reasoning)`. `company_context` is injected into all three prompts when non-empty. |
 
 **Decay-weighted aggregation (fix: multiple orders per ticker)** — `_aggregate_ticker_group(ticker, group, event_lookup, halflife_hours, now)` (module-level) collapses N articles for the same ticker into one `SentimentResult`. Weight per article = `confidence x exp(-ln2 / halflife x age_hours)`. Returns `None` when all-neutral or when both bullish and bearish each exceed 25% of total directional weight (MIXED). The representative `event_id` — used by `_build_signal()` to dispatch to the correct EARN_* handler — is the highest-weight (most recent x high-confidence) article. `_decay_weight(published_at, now, halflife_hours)` (module-level) handles both naive (treated as UTC) and timezone-aware datetimes; `None` returns 1.0.
 
@@ -198,7 +198,8 @@ Direction is no longer determined by beat rate. Instead a 3-LLM debate is run:
 4. Three-tier beat-rate fallback: (1) `source='observed'`, (2) FMP `estimates[ticker].historical_beat_rate`, (3) `settings.earn_default_beat_rate`. Beat rate is now context for debaters, not a gate — `_BEAT_RATE_MIN/_MAX` bounds check removed.
 5. Build `news_summaries`: top-5 `SentimentResult.reasoning` strings from `group`, sorted by `conviction x decay` descending.
 6. Resolve `report_date`, `fiscal_quarter`, `eps_estimate` from calendar fields.
-7. Run `_run_thesis_debate(...)` → `_ThesisVerdictSchema(direction, conviction, reasoning)`.
+6b. Fetch live yfinance snapshot via `asyncio.to_thread(_fetch_company_snapshot, ticker)` — returns `""` on any failure, so the debate continues without it.
+7. Run `_run_thesis_debate(..., company_context=company_context)` → `_ThesisVerdictSchema(direction, conviction, reasoning)`. The snapshot is injected into all three debate prompts (bull, bear, synthesis).
 8. `NEUTRAL` verdict → `return None`.
 9. Reaffirmation: existing position, same direction → `return None` (hold).
 10. Direction flip: existing position, opposite direction → CLOSE signal if `conviction > earn_thesis_flip_conviction_threshold`; otherwise `return None` (hold).
@@ -301,6 +302,9 @@ Core logic:
 - Filters to `1 <= entry.days_until_report <= settings.earn_pre_horizon_days` (`is_actionable` property removed from model)
 - Builds `EstimatesData` per ticker via `_build_estimates(entry)` (skips entries where
   `eps_estimate is None`); populates `state["estimates"]` regardless of dedup status
+- After building estimates, calls `_fetch_analyst_counts()` (module-level, concurrent via
+  `asyncio.Semaphore`) to populate `EstimatesData.num_analysts` from yfinance
+  `numberOfAnalystOpinions`. Failures return 0 and do not abort the pipeline.
 - Deduplicates events via `event_id = f"calendar_earn_pre_{ticker}_{report_date}"`
 - Synthesises `NewsEvent(event_type=EARN_PRE, source="earnings_calendar")`
 - Publishes to Redis; persists to `NewsEventRow`
