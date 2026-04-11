@@ -23,16 +23,15 @@ from news_trade.providers.base import CalendarProvider, EstimatesProvider
 from news_trade.services.event_bus import EventBus
 from news_trade.services.tables import NewsEventRow
 
-_SCAN_DAYS_AHEAD = 5
-
 
 class EarningsCalendarAgent(BaseAgent):
     """Scans the earnings calendar and emits synthetic EARN_PRE NewsEvents.
 
     Responsibilities:
-        - Query the primary CalendarProvider for the next 5 days.
+        - Query the primary CalendarProvider for the next
+          ``earn_pre_horizon_days`` days.
         - Fall back to the secondary provider if the primary returns nothing.
-        - Filter to entries whose ``is_actionable`` flag is True (2-5 days ahead).
+        - Filter to entries with ``1 <= days_until_report <= earn_pre_horizon_days``.
         - Deduplicate against NewsEventRow (same dedup store as NewsIngestorAgent).
         - Publish each new event to the event bus.
         - Persist each new event to SQLite.
@@ -62,14 +61,15 @@ class EarningsCalendarAgent(BaseAgent):
             ``{"news_events": [NewsEvent, ...], "errors": [...]}``
         """
         today = date.today()
-        to_date = today + timedelta(days=_SCAN_DAYS_AHEAD)
+        to_date = today + timedelta(days=self.settings.earn_pre_horizon_days)
         # --- Fetch from primary, fall back if empty ---
         entries = await self._fetch_with_fallback(self._tickers, today, to_date)
 
-        actionable = [e for e in entries if e.is_actionable]
+        horizon = self.settings.earn_pre_horizon_days
+        actionable = [e for e in entries if 1 <= e.days_until_report <= horizon]
         self.logger.debug(
-            "%d actionable calendar entries in window %s - %s",
-            len(actionable), today, to_date,
+            "%d calendar entries in window 1-%d days (%s - %s)",
+            len(actionable), horizon, today, to_date,
         )
 
         published: list[NewsEvent] = []

@@ -46,16 +46,6 @@ class EarningsCalendarEntry(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def is_actionable(self) -> bool:
-        """True if the report is 2-5 days away (the EARN_PRE entry window).
-
-        Beyond 5 days: signal decays before announcement.
-        Under 2 days: implied volatility already elevated — adverse entry price.
-        """
-        return 2 <= self.days_until_report <= 5
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
     def is_candidate(self) -> bool:
         """True if the report is 1-31 days away (the broad monthly scan window).
 

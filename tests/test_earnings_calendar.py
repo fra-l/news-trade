@@ -84,26 +84,6 @@ def _make_agent(
 
 
 class TestEarningsCalendarEntry:
-    def test_is_actionable_at_2_days(self) -> None:
-        entry = _make_entry(report_date=date.today() + timedelta(days=2))
-        assert entry.is_actionable is True
-
-    def test_is_actionable_at_5_days(self) -> None:
-        entry = _make_entry(report_date=date.today() + timedelta(days=5))
-        assert entry.is_actionable is True
-
-    def test_not_actionable_at_1_day(self) -> None:
-        entry = _make_entry(report_date=date.today() + timedelta(days=1))
-        assert entry.is_actionable is False
-
-    def test_not_actionable_at_6_days(self) -> None:
-        entry = _make_entry(report_date=date.today() + timedelta(days=6))
-        assert entry.is_actionable is False
-
-    def test_not_actionable_in_past(self) -> None:
-        entry = _make_entry(report_date=date.today() - timedelta(days=1))
-        assert entry.is_actionable is False
-
     def test_days_until_report(self) -> None:
         entry = _make_entry(report_date=date.today() + timedelta(days=4))
         assert entry.days_until_report == 4
@@ -150,13 +130,6 @@ class TestEarningsCalendarEntry:
     def test_not_candidate_in_past(self) -> None:
         entry = _make_entry(report_date=date.today() - timedelta(days=1))
         assert entry.is_candidate is False
-
-    def test_candidate_includes_actionable_window(self) -> None:
-        """is_candidate is a superset of is_actionable (1-31 vs 2-5 days)."""
-        for days in range(2, 6):
-            entry = _make_entry(report_date=date.today() + timedelta(days=days))
-            assert entry.is_actionable is True
-            assert entry.is_candidate is True
 
 
 # ---------------------------------------------------------------------------
@@ -366,50 +339,6 @@ class TestEarningsCalendarAgentFallback:
         fallback.get_upcoming_earnings = AsyncMock(
             side_effect=RuntimeError("yfinance down")
         )
-
-        agent = EarningsCalendarAgent(
-            self.settings, self.event_bus, primary, fallback, self.engine
-        )
-        result = await agent.run({})
-        assert result["news_events"] == []
-
-
-# ---------------------------------------------------------------------------
-# TestEarningsCalendarAgentWindowFiltering
-# ---------------------------------------------------------------------------
-
-
-class TestEarningsCalendarAgentWindowFiltering:
-    def setup_method(self) -> None:
-        self.engine = _make_engine()
-        self.settings = _make_settings()
-        self.event_bus = AsyncMock()
-        self.event_bus.publish = AsyncMock()
-
-    async def test_entry_at_1_day_not_emitted(self) -> None:
-        entry = _make_entry(report_date=date.today() + timedelta(days=1))
-        primary = AsyncMock()
-        primary.name = "fmp_calendar"
-        primary.get_upcoming_earnings = AsyncMock(return_value=[entry])
-        fallback = AsyncMock()
-        fallback.name = "yfinance_calendar"
-        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
-
-        agent = EarningsCalendarAgent(
-            self.settings, self.event_bus, primary, fallback, self.engine
-        )
-        result = await agent.run({})
-        assert result["news_events"] == []
-        self.event_bus.publish.assert_not_called()
-
-    async def test_entry_at_6_days_not_emitted(self) -> None:
-        entry = _make_entry(report_date=date.today() + timedelta(days=6))
-        primary = AsyncMock()
-        primary.name = "fmp_calendar"
-        primary.get_upcoming_earnings = AsyncMock(return_value=[entry])
-        fallback = AsyncMock()
-        fallback.name = "yfinance_calendar"
-        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
 
         agent = EarningsCalendarAgent(
             self.settings, self.event_bus, primary, fallback, self.engine
@@ -664,3 +593,61 @@ class TestEarningsCalendarAgentEstimatesProvider:
         )
         await agent.run({})
         estimates_provider.get_historical_beat_rate.assert_called_once_with("AAPL")
+
+
+# ---------------------------------------------------------------------------
+# TestEarningsCalendarAgentHorizonFilter
+# ---------------------------------------------------------------------------
+
+
+class TestEarningsCalendarAgentHorizonFilter:
+    """Agent-level tests: the window filter uses settings.earn_pre_horizon_days."""
+
+    def setup_method(self) -> None:
+        self.engine = _make_engine()
+        self.settings = _make_settings(earn_pre_horizon_days=5)
+        self.event_bus = AsyncMock()
+        self.event_bus.publish = AsyncMock()
+
+    def _make_agent_with_entries(self, entries: list) -> EarningsCalendarAgent:
+        primary = AsyncMock()
+        primary.name = "fmp_calendar"
+        primary.get_upcoming_earnings = AsyncMock(return_value=entries)
+        fallback = AsyncMock()
+        fallback.name = "yfinance_calendar"
+        fallback.get_upcoming_earnings = AsyncMock(return_value=[])
+        return EarningsCalendarAgent(
+            self.settings, self.event_bus, primary, fallback, self.engine
+        )
+
+    async def test_entry_at_0_days_not_emitted(self) -> None:
+        """Report today (0 days out) is excluded — fails the 1 <= days check."""
+        agent = self._make_agent_with_entries(
+            [_make_entry(report_date=date.today())]
+        )
+        result = await agent.run({})
+        assert result["news_events"] == []
+
+    async def test_entry_at_1_day_is_emitted(self) -> None:
+        """1 day out is within [1, 5] — included."""
+        agent = self._make_agent_with_entries(
+            [_make_entry(report_date=date.today() + timedelta(days=1))]
+        )
+        result = await agent.run({})
+        assert len(result["news_events"]) == 1
+
+    async def test_entry_at_horizon_is_emitted(self) -> None:
+        """Exactly horizon (5) days out — boundary is inclusive."""
+        agent = self._make_agent_with_entries(
+            [_make_entry(report_date=date.today() + timedelta(days=5))]
+        )
+        result = await agent.run({})
+        assert len(result["news_events"]) == 1
+
+    async def test_entry_beyond_horizon_not_emitted(self) -> None:
+        """6 days out with earn_pre_horizon_days=5 — excluded."""
+        agent = self._make_agent_with_entries(
+            [_make_entry(report_date=date.today() + timedelta(days=6))]
+        )
+        result = await agent.run({})
+        assert result["news_events"] == []
