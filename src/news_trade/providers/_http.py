@@ -58,3 +58,41 @@ async def http_get_with_retry(
         await asyncio.sleep(wait)
         delay = min(delay * 2.0, _MAX_DELAY_S)
     raise RuntimeError("http_get_with_retry: unreachable")  # pragma: no cover
+
+
+async def http_post_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    json: dict[str, Any],
+    max_retries: int = _MAX_RETRIES,
+) -> httpx.Response:
+    """HTTP POST with exponential backoff retry on 429 / 503 / 504.
+
+    Identical retry behaviour to ``http_get_with_retry`` but sends a JSON
+    body.  Used for APIs that require POST for search/filter operations
+    (e.g. USASpending ``search/spending_by_award``).
+    """
+    delay = _BASE_DELAY_S
+    for attempt in range(max_retries + 1):
+        resp = await client.post(url, json=json)
+        if resp.status_code not in _RETRYABLE:
+            resp.raise_for_status()
+            return resp
+        if attempt == max_retries:
+            resp.raise_for_status()
+        retry_after = resp.headers.get("Retry-After", "").strip()
+        wait = float(retry_after) if retry_after.isdigit() else delay
+        wait = min(wait, _MAX_DELAY_S)
+        host = url.split("/")[2]
+        _logger.warning(
+            "HTTP %d — rate limited by %s (attempt %d/%d), retrying in %.1f s",
+            resp.status_code,
+            host,
+            attempt + 1,
+            max_retries,
+            wait,
+        )
+        await asyncio.sleep(wait)
+        delay = min(delay * 2.0, _MAX_DELAY_S)
+    raise RuntimeError("http_post_with_retry: unreachable")  # pragma: no cover

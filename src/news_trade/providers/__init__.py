@@ -7,7 +7,10 @@ without coupling agent code to concrete implementations.
 
 from __future__ import annotations
 
+from typing import Any
+
 from news_trade.config import (
+    GovTradeSettings,
     MarketDataProviderType,
     NewsProviderType,
     SentimentProviderType,
@@ -16,8 +19,10 @@ from news_trade.config import (
 )
 from news_trade.providers.base import (
     CalendarProvider,
+    ContractProvider,
     EstimatesProvider,
     MarketDataProvider,
+    MaterialityProvider,
     NewsProvider,
     SentimentProvider,
 )
@@ -104,6 +109,50 @@ def get_estimates_provider(
         from news_trade.providers.estimates.fmp import FMPEstimatesProvider
         return FMPEstimatesProvider(api_key=cfg.fmp_api_key)
     return None
+
+
+def get_materiality_provider(
+    settings: GovTradeSettings,
+) -> MaterialityProvider:
+    """Return the materiality scorer wired from *settings*.
+
+    Uses ``LLMMaterialityProvider`` when an Anthropic key is configured
+    (inheriting the key from ``Settings`` via ``GovTradeSettings``).
+    Falls back to ``HeuristicMaterialityProvider`` otherwise.
+    """
+    from news_trade.config import Settings
+
+    # Reuse the main Settings for the API key — GovTradeSettings shares the .env file
+    base = Settings()
+    if base.anthropic_api_key:
+        from news_trade.providers.materiality.llm_provider import LLMMaterialityProvider
+        from news_trade.services.llm_client import LLMClientFactory
+
+        return LLMMaterialityProvider(
+            llm=LLMClientFactory(base),
+            daily_budget=base.claude_daily_budget_usd,
+        )
+    from news_trade.providers.materiality.heuristic_provider import (
+        HeuristicMaterialityProvider,
+    )
+    return HeuristicMaterialityProvider()
+
+
+def get_contract_provider(
+    settings: GovTradeSettings,
+    redis_client: Any | None = None,
+) -> ContractProvider:
+    """Return the USASpending contract provider wired with *settings*."""
+    from news_trade.providers.contracts.usaspending import USASpendingProvider
+
+    return USASpendingProvider(settings=settings, redis_client=redis_client)
+
+
+def get_edgar_provider() -> Any:
+    """Return a SEC EDGAR entity-resolution provider (satisfies EdgarProvider)."""
+    from news_trade.providers.contracts.sec_edgar import SECEdgarProvider
+
+    return SECEdgarProvider()
 
 
 def get_calendar_provider(settings: Settings | None = None) -> CalendarProvider:

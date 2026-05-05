@@ -3,3 +3,19 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+
+  # gov-trade runs independently, sharing Redis and the SQLite volume with news-trade.
+  # Requires a Dockerfile at the project root (not yet present).
+  # To run locally without Docker: uv run gov-trade  (GOV_TRADE_ENABLED=true in .env)
+  gov-trade:
+    build: .
+    command: gov-trade
+    environment:
+      - GOV_TRADE_ENABLED=true
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:///data/trades.db
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
+from typing import cast
 
 from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -39,7 +40,7 @@ class NewsEventRow(Base):
 
     @property
     def tickers(self) -> list[str]:
-        return json.loads(self.tickers_json)
+        return cast(list[str], json.loads(self.tickers_json))
 
     @tickers.setter
     def tickers(self, value: list[str]) -> None:
@@ -128,6 +129,166 @@ class EarningsOutcomeRow(Base):
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
+
+
+class LobbyingFilingRow(Base):
+    """Cached LDA lobbying filing — one row per company per quarter.
+
+    Populated by ``LdaProvider`` and used as the data source for
+    ``LobbyingEnrichmentService``.  ``filing_uuid`` is unique so that
+    re-fetching the same quarter is a safe no-op.
+    """
+
+    __tablename__ = "lobbying_filings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    lda_client_name: Mapped[str] = mapped_column(Text, nullable=False)
+    filing_uuid: Mapped[str] = mapped_column(
+        String(256), unique=True, nullable=False, index=True
+    )
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    period: Mapped[str] = mapped_column(String(8), nullable=False)
+    total_spend: Mapped[float] = mapped_column(Float, nullable=False)
+    agency_breakdown_json: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="{}",
+        doc="JSON dict: normalised agency name → proportional spend",
+    )
+    lobbied_agencies_json: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="[]",
+        doc="JSON list of normalised agency names targeted",
+    )
+    raw_description: Mapped[str] = mapped_column(Text, default="")
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class EnrichmentLogRow(Base):
+    """Audit log for every lobbying enrichment call.
+
+    One row per ``LobbyingEnrichmentService.get_multiplier()`` call.
+    Used for calibration: after 6 months of paper trading, regress
+    ``multiplier_applied`` against actual price outcomes.
+    """
+
+    __tablename__ = "enrichment_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_award_id: Mapped[str] = mapped_column(
+        String(256),
+        nullable=False,
+        index=True,
+        default="",
+        doc="References ContractAwardEvent.award_id",
+    )
+    ticker: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    agency: Mapped[str] = mapped_column(Text, nullable=False)
+    multiplier_applied: Mapped[float] = mapped_column(Float, nullable=False)
+    data_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    spend_delta_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class EntityResolutionRow(Base):
+    """Audit log for every entity-resolution attempt.
+
+    One row per ``EntityResolutionService.resolve()`` call. Used to measure
+    per-layer accuracy and tune the resolution pipeline over time.
+    """
+
+    __tablename__ = "entity_resolutions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    award_id: Mapped[str] = mapped_column(
+        String(256),
+        nullable=False,
+        index=True,
+        default="",
+        doc=(
+            "References ContractAwardEvent.award_id; "
+            "empty when called outside the pipeline"
+        ),
+    )
+    recipient_name: Mapped[str] = mapped_column(Text, nullable=False)
+    ticker: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    exchange: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    layer: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        doc="static | edgar | llm | none",
+    )
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class ContractAwardRow(Base):
+    """Persisted USASpending contract award — deduplication and audit trail."""
+
+    __tablename__ = "contract_awards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    award_id: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    recipient_name: Mapped[str] = mapped_column(Text, nullable=False)
+    recipient_uei: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    recipient_parent_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    amount_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    awarding_agency: Mapped[str] = mapped_column(Text, nullable=False)
+    awarding_sub_agency: Mapped[str | None] = mapped_column(Text, nullable=True)
+    award_type: Mapped[str] = mapped_column(String(8), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    naics_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    naics_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    sign_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    last_modified_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    place_of_performance_state: Mapped[str | None] = mapped_column(
+        String(4), nullable=True
+    )
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class GovTradeSignalRow(Base):
+    """Persisted gov-trade signal — linked to contract awards for clean attribution."""
+
+    __tablename__ = "gov_trade_signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    signal_id: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    award_id: Mapped[str] = mapped_column(String(256), index=True)
+    ticker: Mapped[str] = mapped_column(String(16), index=True)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    conviction: Mapped[float] = mapped_column(Float, nullable=False)
+    suggested_qty: Mapped[int] = mapped_column(Integer, nullable=False)
+    entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    take_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    materiality_score: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        doc="Adjusted materiality score that drove this signal",
+    )
+    approved: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        doc="1 = approved by RiskManager, 0 = rejected",
+    )
+    rejection_reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class OrderRow(Base):

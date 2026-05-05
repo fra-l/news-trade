@@ -27,13 +27,14 @@ dependencies = [
 
 [project.scripts]
 news-trade = "news_trade.main:entrypoint"
+gov-trade  = "gov_trade.main:entrypoint"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/news_trade"]
+packages = ["src/news_trade", "src/gov_trade"]
 
 [tool.ruff]
 target-version = "py311"

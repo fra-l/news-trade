@@ -286,6 +286,113 @@ class Settings(BaseSettings):
     )
 
 
+class GovTradeSettings(BaseSettings):
+    """Configuration for the gov-trade contract-award pipeline.
+
+    All settings have safe defaults so that the existing ``news-trade``
+    startup is completely unaffected when ``GOV_TRADE_ENABLED=false``
+    (the default). Fields map directly to env vars by lowercasing the
+    field name (e.g. ``gov_trade_enabled`` → ``GOV_TRADE_ENABLED``).
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # --- Feature gate ---
+    gov_trade_enabled: bool = Field(
+        default=False,
+        description="Enable the gov-trade pipeline; false leaves news-trade unaffected",
+    )
+
+    # --- USASpending poller ---
+    usaspending_poll_interval_minutes: int = Field(
+        default=60,
+        description="Minutes between USASpending API polls",
+    )
+    usaspending_min_award_usd: int = Field(
+        default=5_000_000,
+        description="Minimum obligated award value (USD) to emit a ContractAwardEvent",
+    )
+    usaspending_award_types: list[str] = Field(
+        default=["C", "D"],
+        description=(
+            "USASpending award type codes to ingest: "
+            "A = BPA Call, B = Purchase Order, "
+            "C = Delivery Order, D = Definitive Contract"
+        ),
+    )
+
+    # --- Entity resolution ---
+    entity_resolution_min_confidence: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum confidence score to accept a resolved ticker; "
+            "below this the award is discarded"
+        ),
+    )
+
+    # --- Eligible universe ---
+    gov_trade_market_cap_max_usd: int = Field(
+        default=5_000_000_000,
+        description=(
+            "Maximum market cap (USD) for eligible tickers; "
+            "large-cap awards are excluded"
+        ),
+    )
+
+    # --- LLM provider (independent of news-trade setting) ---
+    gov_trade_llm_provider: str = Field(
+        default="anthropic",
+        description=(
+            "LLM backend for entity resolution and materiality scoring: "
+            "'anthropic' or 'ollama'"
+        ),
+    )
+
+    # --- Senate LDA lobbying enrichment ---
+    lda_api_key: str = Field(
+        default="",
+        description="Senate LDA API key (free registration at lda.senate.gov)",
+    )
+    lobbying_enrichment_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable lobbying enrichment; false returns neutral 1.0 multiplier "
+            "with no API calls"
+        ),
+    )
+    lobbying_lookback_quarters: int = Field(
+        default=4,
+        description=(
+            "Number of prior quarters of LDA filing data to analyse "
+            "per ticker/agency pair"
+        ),
+    )
+    lobbying_cache_ttl_days: int = Field(
+        default=7,
+        description=(
+            "Redis TTL (days) for cached LDA filing data; quarterly data changes rarely"
+        ),
+    )
+    lobbying_min_spend_threshold_usd: int = Field(
+        default=50_000,
+        description=(
+            "Ignore LDA filings below this quarterly spend amount (noise floor)"
+        ),
+    )
+
+
 def get_settings() -> Settings:
     """Return a cached Settings instance."""
-    return Settings()  # type: ignore[call-arg]
+    return Settings()
+
+
+def get_gov_trade_settings() -> GovTradeSettings:
+    """Return a GovTradeSettings instance loaded from the environment."""
+    return GovTradeSettings()

@@ -11,6 +11,7 @@ from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
 from news_trade.models.calendar import EarningsCalendarEntry
+from news_trade.models.contracts import ContractAwardEvent, MaterialityResult
 from news_trade.models.events import NewsEvent
 from news_trade.models.market import MarketSnapshot
 from news_trade.models.sentiment import SentimentResult
@@ -135,5 +136,65 @@ class EstimatesProvider(Protocol):
         Returns:
             Beat rate in ``[0.0, 1.0]``, or ``None`` when the data is
             unavailable or insufficient.
+        """
+        ...
+
+
+@runtime_checkable
+class ContractProvider(Protocol):
+    """Fetches federal contract award records from a data source.
+
+    Unlike ``NewsProvider``, fetching is driven by a time window rather
+    than a ticker watchlist — contract awards are not pre-filtered by company.
+    """
+
+    @property
+    def name(self) -> str:
+        """Human-readable provider name for logging (e.g. 'usaspending')."""
+        ...
+
+    async def fetch(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+    ) -> list[ContractAwardEvent]:
+        """Return contract awards whose action date falls in ``[since, until]``.
+
+        Args:
+            since: Start of the polling window (inclusive).
+            until: End of the polling window (inclusive). Defaults to now
+                   when ``None``.
+        """
+        ...
+
+
+@runtime_checkable
+class MaterialityProvider(Protocol):
+    """Scores the materiality of a contract award for a given ticker.
+
+    The provider returns a ``MaterialityResult`` with ``score`` and
+    ``adjusted_score`` both set to the base score (multiplier = 1.0).
+    The ``MaterialityScorerAgent`` applies lobbying enrichment afterwards
+    via ``model_copy()``, mirroring the ``TradeSignal`` mutation pattern.
+    """
+
+    @property
+    def name(self) -> str:
+        """Human-readable provider name (e.g. 'heuristic', 'llm')."""
+        ...
+
+    async def score(
+        self,
+        award: ContractAwardEvent,
+        ticker: str,
+        market_cap_usd: float | None = None,
+    ) -> MaterialityResult:
+        """Score the materiality of *award* for *ticker*.
+
+        Args:
+            award: The raw contract award event from USASpending.
+            ticker: Resolved stock ticker for the recipient company.
+            market_cap_usd: Current market cap in USD. When ``None``, the
+                provider falls back to absolute award-value heuristics.
         """
         ...

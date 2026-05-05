@@ -78,7 +78,7 @@ src/news_trade/
 │   └── calendar/          # FMPCalendarProvider (primary), YFinanceCalendarProvider (fallback)
 ├── services/              # Business logic + persistence → see services/CLAUDE.md
 │   ├── database.py        # Engine + session factory + create_tables() [runs alembic upgrade head]
-│   ├── tables.py          # ORM table definitions (5 tables)
+│   ├── tables.py          # ORM table definitions (10 tables — 5 news-trade + 5 gov-trade)
 │   ├── llm_client.py      # LLMClient Protocol, AnthropicLLMClient, OllamaLLMClient, LLMClientFactory
 │   ├── estimates_renderer.py  # Deterministic FMP data → narrative formatter
 │   ├── confidence_scorer.py   # 4-component weighted scorer + confidence gate
@@ -195,13 +195,17 @@ uv sync                          # Install all dependencies (including dev extra
 cp .env.example .env             # Configure environment variables
 docker compose up -d             # Start Redis
 
-# Run
+# Run — news-trade
 uv run news-trade                # Start — fetches small-cap earnings, prompts for ticker selection, then loops
 uv run news-trade --once         # Run a single cycle and exit (non-interactive: auto-selects top-N tickers)
 uv run news-trade --replay-ticker AAPL            # Replay last 5 stored AAPL articles (implies --once)
 uv run news-trade --replay-ticker AAPL --replay-limit 10  # Replay last 10 stored articles
 uv run news-trade --resume-session                # Log previous session summary on startup (latest file)
 uv run news-trade --session-file data/sessions/session_20260401_090000.json  # Load specific session
+
+# Run — gov-trade (set GOV_TRADE_ENABLED=true in .env first)
+uv run gov-trade                 # Start polling USASpending every USASPENDING_POLL_INTERVAL_MINUTES (default 60)
+uv run gov-trade --once          # Run a single cycle and exit
 
 # Quality
 uv run ruff check src/ tests/    # Lint (rules: E, F, I, N, UP, B, SIM, RUF)
