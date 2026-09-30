@@ -1,0 +1,181 @@
+{
+  "DEPT OF DEFENSE": [
+    "Department of Defense",
+    "Office of the Secretary of Defense",
+    "DoD",
+    "Defense Department"
+  ],
+  "DEPT OF THE ARMY": [
+    "Department of the Army",
+    "U.S. Army",
+    "Army"
+  ],
+  "DEPT OF THE NAVY": [
+    "Department of the Navy",
+    "U.S. Navy",
+    "U.S. Marine Corps",
+    "Navy",
+    "Marine Corps"
+  ],
+  "DEPT OF THE AIR FORCE": [
+    "Department of the Air Force",
+    "U.S. Air Force",
+    "Air Force",
+    "U.S. Space Force",
+    "Space Force"
+  ],
+  "DEPT OF HEALTH AND HUMAN SERVICES": [
+    "Department of Health and Human Services",
+    "HHS",
+    "Centers for Medicare & Medicaid Services",
+    "CMS",
+    "National Institutes of Health",
+    "NIH",
+    "Food and Drug Administration",
+    "FDA",
+    "Centers for Disease Control and Prevention",
+    "CDC"
+  ],
+  "DEPT OF VETERANS AFFAIRS": [
+    "Department of Veterans Affairs",
+    "VA",
+    "Veterans Affairs"
+  ],
+  "DEPT OF HOMELAND SECURITY": [
+    "Department of Homeland Security",
+    "DHS",
+    "Federal Emergency Management Agency",
+    "FEMA",
+    "Customs and Border Protection",
+    "CBP",
+    "Immigration and Customs Enforcement",
+    "ICE",
+    "Transportation Security Administration",
+    "TSA",
+    "Cybersecurity and Infrastructure Security Agency",
+    "CISA",
+    "U.S. Coast Guard"
+  ],
+  "DEPT OF TRANSPORTATION": [
+    "Department of Transportation",
+    "DOT",
+    "Federal Aviation Administration",
+    "FAA",
+    "Federal Highway Administration",
+    "FHWA",
+    "Federal Railroad Administration",
+    "FRA"
+  ],
+  "DEPT OF JUSTICE": [
+    "Department of Justice",
+    "DOJ",
+    "Federal Bureau of Investigation",
+    "FBI",
+    "Bureau of Prisons",
+    "DEA"
+  ],
+  "DEPT OF ENERGY": [
+    "Department of Energy",
+    "DOE",
+    "Energy Department"
+  ],
+  "DEPT OF AGRICULTURE": [
+    "Department of Agriculture",
+    "USDA",
+    "Agriculture Department"
+  ],
+  "DEPT OF STATE": [
+    "Department of State",
+    "State Department",
+    "State"
+  ],
+  "DEPT OF THE TREASURY": [
+    "Department of the Treasury",
+    "Treasury",
+    "Internal Revenue Service",
+    "IRS",
+    "Office of the Comptroller of the Currency",
+    "OCC"
+  ],
+  "DEPT OF EDUCATION": [
+    "Department of Education",
+    "Education Department"
+  ],
+  "DEPT OF HOUSING AND URBAN DEVELOPMENT": [
+    "Department of Housing and Urban Development",
+    "HUD"
+  ],
+  "DEPT OF THE INTERIOR": [
+    "Department of the Interior",
+    "Interior Department"
+  ],
+  "DEPT OF LABOR": [
+    "Department of Labor",
+    "DOL",
+    "Labor Department"
+  ],
+  "DEPT OF COMMERCE": [
+    "Department of Commerce",
+    "Commerce Department",
+    "National Oceanic and Atmospheric Administration",
+    "NOAA",
+    "Bureau of the Census",
+    "Census Bureau"
+  ],
+  "GENERAL SERVICES ADMINISTRATION": [
+    "General Services Administration",
+    "GSA"
+  ],
+  "NATIONAL AERONAUTICS AND SPACE ADMINISTRATION": [
+    "National Aeronautics and Space Administration",
+    "NASA"
+  ],
+  "INTELLIGENCE COMMUNITY": [
+    "Office of the Director of National Intelligence",
+    "ODNI",
+    "Central Intelligence Agency",
+    "CIA",
+    "National Security Agency",
+    "NSA",
+    "National Reconnaissance Office",
+    "NRO",
+    "Defense Intelligence Agency",
+    "DIA"
+  ],
+  "SOCIAL SECURITY ADMINISTRATION": [
+    "Social Security Administration",
+    "SSA"
+  ],
+  "ENVIRONMENTAL PROTECTION AGENCY": [
+    "Environmental Protection Agency",
+    "EPA"
+  ],
+  "NUCLEAR REGULATORY COMMISSION": [
+    "Nuclear Regulatory Commission",
+    "NRC"
+  ],
+  "SMALL BUSINESS ADMINISTRATION": [
+    "Small Business Administration",
+    "SBA"
+  ],
+  "NATIONAL SCIENCE FOUNDATION": [
+    "National Science Foundation",
+    "NSF"
+  ],
+  "OFFICE OF PERSONNEL MANAGEMENT": [
+    "Office of Personnel Management",
+    "OPM"
+  ],
+  "OFFICE OF MANAGEMENT AND BUDGET": [
+    "Office of Management and Budget",
+    "OMB"
+  ],
+  "FEDERAL COMMUNICATIONS COMMISSION": [
+    "Federal Communications Commission",
+    "FCC"
+  ],
+  "SECURITIES AND EXCHANGE COMMISSION": [
+    "Securities and Exchange Commission",
+    "SEC"
+  ]
+}
