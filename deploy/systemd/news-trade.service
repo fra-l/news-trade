@@ -1,0 +1,15 @@
+[Unit]
+Description=news-trade (LangGraph news-driven paper trader)
+After=network-online.target redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/news-trade
+ExecStart=%h/news-trade/.venv/bin/news-trade
+Restart=on-failure
+RestartSec=10
+
+# Deliberately NOT enabled at boot: start it by hand with
+#   systemctl --user start news-trade
+# See deploy/README.md.
